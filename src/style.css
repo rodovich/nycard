@@ -75,6 +75,8 @@ header h1 {
 }
 .segmented button:last-child {
   border-radius: 0 6px 6px 0;
+}
+.segmented button + button {
   margin-left: -1px;
 }
 
@@ -110,6 +112,22 @@ main {
 }
 #toolbar .hint {
   color: #6b6964;
+}
+#toolbar :is(select, input) {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid #c8c6c1;
+  border-radius: 6px;
+  background: #fff;
+}
+#toolbar .font {
+  max-width: 180px;
+}
+#toolbar .size {
+  width: 64px;
+}
+#toolbar .color-picker {
+  margin: 0 6px;
 }
 #toolbar .dpi {
   margin-left: 8px;
@@ -219,6 +237,28 @@ main {
   overflow: hidden;
   cursor: move;
 }
+.item.text {
+  overflow: visible;
+}
+/* As flex items, lines too wide for the box overflow per the alignment, like canvas fillText in the export. */
+.item.text > div {
+  display: flex;
+  justify-content: inherit;
+  white-space: pre;
+}
+.text-editor {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  outline: calc(1px / var(--scale)) dashed #2f7de1;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: normal;
+  pointer-events: auto;
+}
 .item img,
 .ghost {
   position: absolute;
@@ -285,9 +325,12 @@ main {
 .selection .handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
 .selection .handle.w { left: 0; top: 50%; cursor: ew-resize; }
 
-/* Edge handles only crop; resizing keeps the aspect ratio from the corners. */
+/* Corners resize keeping the aspect ratio. Edges crop images and set the wrap width of text. */
 .selection:not(.cropping) .handle:is(.n, .e, .s, .w) {
   display: none;
+}
+.selection.text:not(.cropping) .handle:is(.e, .w) {
+  display: block;
 }
 .selection.cropping {
   outline-style: dashed;
@@ -355,15 +398,20 @@ main {
   white-space: nowrap;
   font-size: 12px;
 }
-.asset .actions {
+.asset .actions,
+#add-text {
   display: flex;
+  align-items: center;
   gap: 4px;
 }
-.asset .actions button {
+#add-text strong {
+  margin-right: auto;
+}
+:is(.asset .actions, #add-text) button {
   padding: 2px 8px;
   font-size: 12px;
 }
-.asset .actions .side {
+button.capitalize {
   text-transform: capitalize;
 }
 .asset .actions .remove {

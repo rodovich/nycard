@@ -14,6 +14,9 @@ export const SAFE_PX = SAFE_IN * DPI;
 
 export const SIDES = ['front', 'back'];
 
+export const ptToPx = (pt) => (pt / 72) * DPI;
+export const pxToPt = (px) => (px / DPI) * 72;
+
 /** Full-bleed canvas size in print pixels. */
 export function canvasSize(orientation) {
   const short = (TRIM_SHORT_IN + 2 * BLEED_IN) * DPI;

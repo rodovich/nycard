@@ -1,4 +1,5 @@
-import { getState, itemsOnSide } from './store.js';
+import { getState, isText, itemsOnSide } from './store.js';
+import { drawText } from './text.js';
 import { getBlob } from './blobs.js';
 import { canvasSize, DPI, SIDES } from './specs.js';
 
@@ -12,7 +13,12 @@ async function renderSide(design, side) {
   ctx.fillRect(0, 0, w, h);
   ctx.imageSmoothingQuality = 'high';
   ctx.translate(w / 2, h / 2);
-  for (const { assetId, frame: f, image: r } of itemsOnSide(side, design)) {
+  for (const item of itemsOnSide(side, design)) {
+    if (isText(item)) {
+      drawText(ctx, item);
+      continue;
+    }
+    const { assetId, frame: f, image: r } = item;
     const bitmap = await createImageBitmap(await getBlob(assetId));
     ctx.save();
     ctx.beginPath();

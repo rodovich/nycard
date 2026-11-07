@@ -1,6 +1,8 @@
 import { putBlob, getBlob, deleteBlob } from './blobs.js';
-import { bleedRect, canvasSize, SIDES, trimRect } from './specs.js';
+import { bleedRect, canvasSize, ptToPx, SIDES, trimRect } from './specs.js';
+import { defaultFamily } from './fonts.js';
 import { containRect, coverRect, offsetRect } from './geometry.js';
+import { textHeight } from './text.js';
 
 const KEY = 'nycard.design.v2';
 const V1_KEY = 'nycard.design.v1';
@@ -9,6 +11,7 @@ const V1_KEY = 'nycard.design.v1';
  * Item geometry is in print pixels, with the origin at the center of the card.
  * `frame` is the visible (cropped) rectangle; `image` is where the whole
  * source image sits, so cropping is the part of `image` inside `frame`.
+ * Text items (`kind: 'text'`) have no `image`; their frame height follows the wrapped text.
  */
 function initialState() {
   return {
@@ -46,8 +49,10 @@ function fromV1(v1) {
 }
 
 export function offsetItem({ frame, image }, dx, dy) {
-  return { frame: offsetRect(frame, dx, dy), image: offsetRect(image, dx, dy) };
+  return { frame: offsetRect(frame, dx, dy), ...(image && { image: offsetRect(image, dx, dy) }) };
 }
+
+export const isText = (item) => item.kind === 'text';
 
 export const getState = () => state;
 export const subscribe = (fn) => (listeners.add(fn), () => listeners.delete(fn));
@@ -67,9 +72,18 @@ export const selectedItems = () => state.items.filter((i) => state.selectedIds.i
 
 export function updateItems(patches) {
   update(() => {
-    for (const [id, patch] of patches) Object.assign(getItem(id) ?? {}, patch);
+    for (const [id, patch] of patches) {
+      const item = getItem(id);
+      if (!item) continue;
+      Object.assign(item, patch);
+      if (isText(item)) fitText(item);
+    }
   });
 }
+
+const fitText = (item) => (item.frame = { ...item.frame, h: textHeight(item) });
+
+export const refitText = () => update((s) => s.items.filter(isText).forEach(fitText));
 
 export const updateItem = (id, patch) => updateItems([[id, patch]]);
 
@@ -156,10 +170,30 @@ export function placeAsset(assetId, side, at = { x: 0, y: 0 }) {
   addItem({ assetId, side, frame: rect, image: { ...rect } });
 }
 
+export function addText(side) {
+  const { w } = trimRect(state.orientation);
+  const text = {
+    kind: 'text',
+    side,
+    text: 'Happy New Year',
+    font: defaultFamily(),
+    size: ptToPx(28),
+    color: '#1d1d1f',
+    align: 'center',
+    bold: false,
+    italic: false,
+    frame: { x: -w * 0.4, y: 0, w: w * 0.8, h: 0 },
+  };
+  fitText(text);
+  text.frame.y = -text.frame.h / 2;
+  return addItem(text);
+}
+
 function addItem(item) {
   const id = crypto.randomUUID();
   update((s) => s.items.push({ id, ...item }));
   select([id]);
+  return id;
 }
 
 export function restack(id, dir) {

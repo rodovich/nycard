@@ -1,14 +1,17 @@
 import {
   addFiles,
+  addText,
   assetUrl,
   fillCard,
   getAsset,
   getItem,
   getState,
+  isText,
   itemsOnSide,
   loadAssetUrls,
   offsetItem,
   placeAsset,
+  refitText,
   removeAsset,
   removeItems,
   restack,
@@ -22,11 +25,13 @@ import {
   updateItem,
   updateItems,
 } from './store.js';
-import { bleedRect, canvasSize, DPI, safeRect, SIDES, specSummary, trimRect } from './specs.js';
+import { bleedRect, canvasSize, DPI, ptToPx, pxToPt, safeRect, SIDES, specSummary, trimRect } from './specs.js';
 import { alignLines, clamp, intersects, offsetRect, rectFromPoints, scaleRect, unionRect } from './geometry.js';
 import { snapper } from './snap.js';
 import { PALETTE } from './palette.js';
 import { downloadCard } from './export.js';
+import { fontSpec, layoutLines, LINE_HEIGHT } from './text.js';
+import { canListLocalFonts, fontFamilies, listLocalFonts, listLocalFontsIfGranted } from './fonts.js';
 
 const ASSET_MIME = 'application/x-nycard-asset';
 const MIN_SIZE = 30; // print px
@@ -39,6 +44,8 @@ const cards = {};
 let scale = 1;
 /** Feedback drawn on one side during a pointer drag: `{ side, lines?: { x, y }, marquee?: rect }`. */
 let dragHints = null;
+/** The text item being edited in place, if any. */
+let editingId = null;
 
 function el(tag, className, parent) {
   const e = document.createElement(tag);
@@ -97,6 +104,39 @@ function colorPicker(parent, label, onPick) {
   };
 }
 
+const JUSTIFY = { left: 'flex-start', center: 'center', right: 'flex-end' };
+const textStyle = (t) => ({
+  font: fontSpec(t),
+  lineHeight: String(LINE_HEIGHT),
+  color: t.color,
+  textAlign: t.align,
+  justifyContent: JUSTIFY[t.align],
+});
+
+function renderText(e, t) {
+  Object.assign(e.style, textStyle(t));
+  const lines = layoutLines(t);
+  while (e.children.length > lines.length) e.lastChild.remove();
+  lines.forEach((line, i) => {
+    const div = e.children[i] ?? el('div', null, e);
+    div.textContent = line;
+    div.style.height = `${t.size * LINE_HEIGHT}px`;
+  });
+}
+
+function startEditing(id) {
+  editingId = id;
+  select([id]);
+  const { editor } = cards[getItem(id).side];
+  editor.focus();
+  editor.select();
+}
+
+function stopEditing() {
+  editingId = null;
+  render();
+}
+
 function buildCard(side) {
   const figure = $(`.side[data-side="${side}"]`);
   const card = $('.card', figure);
@@ -119,12 +159,20 @@ function buildCard(side) {
     el('div', `handle ${h}`, selection).dataset.handle = h;
   }
   const marquee = el('div', 'marquee', overlayOrigin);
-  cards[side] = { card, picker, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, els: new Map() };
+  const editor = el('textarea', 'text-editor', overlayOrigin);
+  editor.addEventListener('input', () => updateItem(editingId, { text: editor.value }));
+  editor.addEventListener('keydown', (e) => e.key === 'Escape' && editor.blur());
+  // Switching to another window also blurs the editor; editing resumes when the window regains focus.
+  editor.addEventListener('blur', () => document.hasFocus() && stopEditing());
+  cards[side] = {
+    card, picker, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, editor,
+    els: new Map(),
+  };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
   card.addEventListener('dblclick', (e) => {
-    const id = e.target.closest('.item')?.dataset.id;
-    if (id) toggleCrop(id);
+    const item = getItem(e.target.closest('.item')?.dataset.id);
+    if (item) isText(item) ? startEditing(item.id) : toggleCrop(item.id);
   });
   card.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -159,16 +207,21 @@ function renderCard(side) {
   items.forEach((item, index) => {
     let e = c.els.get(item.id);
     if (!e) {
-      e = el('div', 'item');
+      e = el('div', isText(item) ? 'item text' : 'item');
       e.dataset.id = item.id;
-      el('img', null, e).draggable = false;
+      if (!isText(item)) el('img', null, e).draggable = false;
       c.els.set(item.id, e);
     }
     if (c.items.children[index] !== e) c.items.insertBefore(e, c.items.children[index] ?? null);
-    const img = e.firstChild;
-    setSrc(img, assetUrl(item.assetId));
     place(e, item.frame);
-    place(img, { ...item.image, x: item.image.x - item.frame.x, y: item.image.y - item.frame.y });
+    if (isText(item)) {
+      renderText(e, item);
+      e.style.visibility = item.id === editingId ? 'hidden' : '';
+    } else {
+      const img = e.firstChild;
+      setSrc(img, assetUrl(item.assetId));
+      place(img, { ...item.image, x: item.image.x - item.frame.x, y: item.image.y - item.frame.y });
+    }
   });
 
   const selected = selectedItems().filter((i) => i.side === side);
@@ -181,6 +234,14 @@ function renderCard(side) {
   if (single) {
     place(c.selection, single.frame);
     c.selection.classList.toggle('cropping', !!cropping);
+    c.selection.classList.toggle('text', isText(single));
+  }
+  const editing = items.find((i) => i.id === editingId);
+  c.editor.hidden = !editing;
+  if (editing) {
+    place(c.editor, editing.frame);
+    Object.assign(c.editor.style, textStyle(editing));
+    if (c.editor.value !== editing.text) c.editor.value = editing.text;
   }
   if (cropping) {
     setSrc(c.ghost, assetUrl(single.assetId));
@@ -218,7 +279,7 @@ function trackPointer(e, onMove, onClick) {
 }
 
 function onPointerDown(e, side) {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || e.target === cards[side].editor) return;
   e.preventDefault();
   document.activeElement?.blur();
   const handle = e.target.dataset.handle;
@@ -247,9 +308,10 @@ function startDrag(e, side, handle, onClick) {
   const { selectedIds, cropId } = getState();
   const starts = selectedItems()
     .filter((i) => i.side === side)
-    .map((i) => ({ id: i.id, frame: { ...i.frame }, image: { ...i.image }, handle }));
+    .map((i) => ({ id: i.id, frame: { ...i.frame }, image: i.image && { ...i.image }, size: i.size, handle }));
   const cropping = starts.length === 1 && cropId === starts[0].id;
-  const mode = handle ? (cropping ? 'crop' : 'resize') : cropping ? 'pan' : 'move';
+  const textWidth = handle === 'e' || handle === 'w';
+  const mode = handle ? (cropping ? 'crop' : textWidth ? 'width' : 'resize') : cropping ? 'pan' : 'move';
   const bounds = unionRect(starts.map((st) => st.frame));
   const targets = snapTargets(side, selectedIds);
   trackPointer(e, (ev) => {
@@ -290,7 +352,7 @@ function snapTargets(side, excludeIds) {
 
 // `targets` is null when snapping is off.
 const drag = {
-  resize({ frame, image, handle }, dx, dy, targets) {
+  resize({ frame, image, size, handle }, dx, dy, targets) {
     const sx = handle.includes('w') ? -1 : 1;
     const sy = handle.includes('n') ? -1 : 1;
     const anchor = { x: sx > 0 ? frame.x : frame.x + frame.w, y: sy > 0 ? frame.y : frame.y + frame.h };
@@ -306,7 +368,18 @@ const drag = {
       else if (ddy) k = (sy * (cy + ddy - anchor.y)) / frame.h;
     }
     k = Math.max(k, MIN_SIZE / Math.min(frame.w, frame.h));
-    return { frame: scaleRect(frame, k, anchor), image: scaleRect(image, k, anchor) };
+    const frameNext = scaleRect(frame, k, anchor);
+    return image ? { frame: frameNext, image: scaleRect(image, k, anchor) } : { frame: frameNext, size: size * k };
+  },
+
+  // Text only: changes the wrap width, keeping the font size.
+  width({ frame, handle }, dx, dy, targets) {
+    const snapX = targets ? targets.x.snap : (v) => v;
+    let left = frame.x;
+    let right = frame.x + frame.w;
+    if (handle === 'w') left = Math.min(snapX(left + dx), right - MIN_SIZE);
+    else right = Math.max(snapX(right + dx), left + MIN_SIZE);
+    return { frame: { ...frame, x: left, w: right - left } };
   },
 
   crop({ frame, image, handle }, dx, dy, targets) {
@@ -331,39 +404,114 @@ const drag = {
   },
 };
 
+let toolbarKey;
+let refreshToolbar;
+
+// Rebuilding the controls on every render would take focus from the size field while typing in it.
 function renderToolbar() {
   const s = getState();
-  const bar = $('#toolbar');
   const items = selectedItems();
+  const key = JSON.stringify([s.selectedIds, s.cropId, items.map((i) => i.side), !s.items.length, canListLocalFonts()]);
+  if (key !== toolbarKey) {
+    toolbarKey = key;
+    refreshToolbar = buildToolbar(items);
+  }
+  refreshToolbar?.();
+}
+
+function buildToolbar(items) {
+  const s = getState();
+  const bar = $('#toolbar');
   bar.replaceChildren();
   if (!items.length) {
     el('span', 'hint', bar).textContent = s.items.length
-      ? 'Click an image to select it; Shift-click or drag a box to select several. Double-click to crop. Hold Option (Alt) while dragging to stop snapping.'
-      : 'Add images from the panel on the right, then place them on the front or back.';
+      ? 'Click to select; Shift-click or drag a box to select several. Double-click an image to crop it, or text to edit it. Hold Option (Alt) while dragging to stop snapping.'
+      : 'Add images or text from the panel on the right.';
     return;
   }
   const [item] = items;
+  const { id } = item;
+  let refresh;
   if (items.length > 1) {
-    el('span', 'hint', bar).textContent = `${items.length} images selected`;
+    el('span', 'hint', bar).textContent = `${items.length} items selected`;
+  } else if (isText(item)) {
+    refresh = textControls(bar, id);
   } else {
-    const cropping = s.cropId === item.id;
-    button(bar, cropping ? 'Done cropping' : 'Crop', () => toggleCrop(item.id), cropping ? 'active' : '');
-    button(bar, 'Fill card', () => fillCard(item.id));
-    button(bar, 'Uncrop', () => updateItem(item.id, { frame: { ...item.image } }));
-    button(bar, 'Forward', () => restack(item.id, 1));
-    button(bar, 'Backward', () => restack(item.id, -1));
+    const cropping = s.cropId === id;
+    button(bar, cropping ? 'Done cropping' : 'Crop', () => toggleCrop(id), cropping ? 'active' : '');
+    button(bar, 'Fill card', () => fillCard(id));
+    button(bar, 'Uncrop', () => updateItem(id, { frame: { ...getItem(id).image } }));
+  }
+  if (items.length === 1) {
+    button(bar, 'Forward', () => restack(id, 1));
+    button(bar, 'Backward', () => restack(id, -1));
   }
   const sides = new Set(items.map((i) => i.side));
   const other = sides.size === 1 && SIDES.find((side) => !sides.has(side));
   if (other) button(bar, `Move to ${other}`, () => updateItems(items.map((i) => [i.id, { side: other }])));
   button(bar, 'Delete', () => removeItems(items.map((i) => i.id)), 'danger');
-  if (items.length > 1) return;
+  if (items.length > 1 || isText(item)) return refresh;
 
-  const asset = getAsset(item.assetId);
-  const dpi = Math.round(asset.width / (item.image.w / DPI));
-  const res = el('span', dpi < LOW_DPI ? 'dpi low' : 'dpi', bar);
-  res.textContent = `${dpi} dpi`;
-  res.title = dpi < LOW_DPI ? `Below ${LOW_DPI} dpi; this image may print blurry at this size.` : 'Print resolution at this size';
+  const res = el('span', 'dpi', bar);
+  return () => {
+    const { assetId, image } = getItem(id);
+    const dpi = Math.round(getAsset(assetId).width / (image.w / DPI));
+    res.textContent = `${dpi} dpi`;
+    res.classList.toggle('low', dpi < LOW_DPI);
+    res.title = dpi < LOW_DPI ? `Below ${LOW_DPI} dpi; this image may print blurry at this size.` : 'Print resolution at this size';
+  };
+}
+
+function textControls(bar, id) {
+  button(bar, 'Edit text', () => startEditing(id));
+
+  const font = el('select', 'font', bar);
+  const fonts = fontFamilies();
+  const current = getItem(id).font;
+  for (const family of fonts.includes(current) ? fonts : [current, ...fonts]) {
+    const option = el('option', null, font);
+    option.value = option.textContent = family;
+    option.style.fontFamily = `"${family}"`;
+  }
+  if (canListLocalFonts()) {
+    const showAll = el('option', null, font);
+    showAll.value = '';
+    showAll.textContent = 'Show all installed fonts…';
+  }
+  font.addEventListener('change', async () => {
+    if (font.value) return updateItem(id, { font: font.value });
+    try {
+      await listLocalFonts();
+    } catch (e) {
+      console.warn('Could not list installed fonts', e);
+    }
+    render();
+  });
+
+  const size = el('input', 'size', bar);
+  size.type = 'number';
+  size.min = '1';
+  size.title = 'Font size in points';
+  size.addEventListener('input', () => size.valueAsNumber > 0 && updateItem(id, { size: ptToPx(size.valueAsNumber) }));
+  el('span', 'unit', bar).textContent = 'pt';
+
+  const color = colorPicker(bar, 'Color', (c) => updateItem(id, { color: c }));
+  const toggle = (label, prop) => button(bar, label, () => updateItem(id, { [prop]: !getItem(id)[prop] }));
+  const bold = toggle('Bold', 'bold');
+  const italic = toggle('Italic', 'italic');
+  const alignGroup = el('div', 'segmented', bar);
+  const ALIGNS = ['left', 'center', 'right'];
+  const aligns = ALIGNS.map((align) => button(alignGroup, align, () => updateItem(id, { align }), 'capitalize'));
+
+  return () => {
+    const t = getItem(id);
+    font.value = t.font;
+    if (document.activeElement !== size) size.value = Math.round(pxToPt(t.size) * 10) / 10;
+    color.set(t.color);
+    bold.classList.toggle('active', t.bold);
+    italic.classList.toggle('active', t.italic);
+    aligns.forEach((b, i) => b.classList.toggle('active', ALIGNS[i] === t.align));
+  };
 }
 
 let renderedAssetKey;
@@ -385,7 +533,7 @@ function renderTray() {
     name.textContent = asset.name;
     name.title = `${asset.name} (${asset.width}×${asset.height})`;
     const actions = el('div', 'actions', li);
-    for (const side of SIDES) button(actions, `+ ${side}`, () => placeAsset(asset.id, side), 'side');
+    sideButtons(actions, (side) => placeAsset(asset.id, side));
     button(actions, '×', () => removeAsset(asset.id), 'remove').title = 'Remove from project';
   }
 }
@@ -399,6 +547,10 @@ async function onCardDrop(e, side) {
   if (assetId) return placeAsset(assetId, side, at);
   const added = await addFiles(e.dataTransfer.files);
   added.forEach((a, i) => placeAsset(a.id, side, { x: at.x + i * 60, y: at.y + i * 60 }));
+}
+
+function sideButtons(parent, onPick) {
+  for (const side of SIDES) button(parent, `+ ${side}`, () => onPick(side), 'capitalize');
 }
 
 function setupFileInputs() {
@@ -452,7 +604,7 @@ function setupHeader() {
 
 function setupKeyboard() {
   window.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, textarea') || document.querySelector(':popover-open')) return;
+    if (e.target.closest('input, textarea, select') || document.querySelector(':popover-open')) return;
     const s = getState();
     const items = selectedItems();
     if (e.key === 'Escape') {
@@ -491,9 +643,15 @@ function render() {
 }
 
 async function main() {
-  await loadAssetUrls();
+  await Promise.all([
+    loadAssetUrls(),
+    listLocalFontsIfGranted().catch((e) => console.warn('Could not list installed fonts', e)),
+  ]);
+  // Fonts can measure differently than when the design was saved.
+  refitText();
   SIDES.forEach(buildCard);
   setupHeader();
+  sideButtons($('#add-text'), (side) => startEditing(addText(side)));
   setupFileInputs();
   setupKeyboard();
   subscribe(render);
