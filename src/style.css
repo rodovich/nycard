@@ -395,12 +395,9 @@ main {
 .selection .handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
 .selection .handle.w { left: 0; top: 50%; cursor: ew-resize; }
 
-/* Corners resize keeping the aspect ratio. Edges crop images and set the wrap width of text. */
-.selection:not(.cropping) .handle:is(.n, .e, .s, .w) {
+/* Text height follows its lines, so text has no top or bottom handles. */
+.selection.text .handle:is(.n, .s) {
   display: none;
-}
-.selection.text:not(.cropping) .handle:is(.e, .w) {
-  display: block;
 }
 .selection.cropping {
   outline-style: dashed;

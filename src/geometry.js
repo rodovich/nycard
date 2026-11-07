@@ -10,6 +10,21 @@ export const scaleRect = (r, k, from, to = from) => ({
   h: r.h * k,
 });
 
+/** Scales `r` up (never down) about its center until it covers `box`, then shifts it the least distance that covers. */
+export function growToCover(r, box) {
+  const k = Math.max(1, box.w / r.w, box.h / r.h);
+  const w = r.w * k;
+  const h = r.h * k;
+  return {
+    x: clamp(r.x + (r.w - w) / 2, box.x + box.w - w, box.x),
+    y: clamp(r.y + (r.h - h) / 2, box.y + box.h - h, box.y),
+    w,
+    h,
+  };
+}
+
+export const rectEdges = (r) => ({ left: r.x, top: r.y, right: r.x + r.w, bottom: r.y + r.h });
+
 export function unionRect(rects) {
   const x = Math.min(...rects.map((r) => r.x));
   const y = Math.min(...rects.map((r) => r.y));

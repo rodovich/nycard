@@ -32,7 +32,7 @@ import {
   updateItems,
 } from './store.js';
 import { bleedRect, canvasSize, DPI, ptToPx, pxToPt, safeRect, SIDES, specSummary, trimRect } from './specs.js';
-import { alignLines, clamp, intersects, offsetRect, rectFromPoints, scaleRect, unionRect } from './geometry.js';
+import { alignLines, clamp, growToCover, intersects, rectEdges, offsetRect, rectFromPoints, scaleRect, unionRect } from './geometry.js';
 import { snapper } from './snap.js';
 import { PALETTE } from './palette.js';
 import { LAYOUTS, layoutSlots } from './layouts.js';
@@ -456,10 +456,10 @@ function startDrag(e, side, handle, onClick) {
     .filter((i) => i.side === side)
     .map((i) => ({ ...structuredClone(i), handle }));
   const cropping = starts.length === 1 && cropId === starts[0].id;
-  const textWidth = handle === 'e' || handle === 'w';
+  const edge = handle?.length === 1;
   const mode = !handle
     ? cropping ? 'pan' : 'move'
-    : handle.startsWith('angle') ? 'angle' : cropping ? 'crop' : textWidth ? 'width' : 'resize';
+    : handle.startsWith('angle') ? 'angle' : cropping ? 'crop' : edge ? 'stretch' : 'resize';
   const bounds = unionRect(starts.map((st) => st.frame));
   const targets = snapTargets(side, selectedIds);
   const edgeDrops = mode === 'angle'
@@ -514,6 +514,19 @@ function snapTargets(side, excludeIds) {
   return { x: axis('x'), y: axis('y') };
 }
 
+const NO_LIMIT = { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity };
+
+function moveEdges(frame, handle, dx, dy, targets, limit = NO_LIMIT) {
+  const snapX = targets ? targets.x.snap : (v) => v;
+  const snapY = targets ? targets.y.snap : (v) => v;
+  let { left, top, right, bottom } = rectEdges(frame);
+  if (handle.includes('w')) left = clamp(snapX(left + dx), limit.left, right - MIN_SIZE);
+  if (handle.includes('e')) right = clamp(snapX(right + dx), left + MIN_SIZE, limit.right);
+  if (handle.includes('n')) top = clamp(snapY(top + dy), limit.top, bottom - MIN_SIZE);
+  if (handle.includes('s')) bottom = clamp(snapY(bottom + dy), top + MIN_SIZE, limit.bottom);
+  return rectFromPoints({ x: left, y: top }, { x: right, y: bottom });
+}
+
 // `targets` is null when snapping is off.
 const drag = {
   resize({ frame, image, size, shape, handle }, dx, dy, targets) {
@@ -552,35 +565,20 @@ const drag = {
     return { shape: { type, drop: clampDrop(start, type, snap ? snap.snap(next) : next) } };
   },
 
-  // Text only: changes the wrap width, keeping the font size.
-  width({ frame, handle }, dx, dy, targets) {
-    const snapX = targets ? targets.x.snap : (v) => v;
-    let left = frame.x;
-    let right = frame.x + frame.w;
-    if (handle === 'w') left = Math.min(snapX(left + dx), right - MIN_SIZE);
-    else right = Math.max(snapX(right + dx), left + MIN_SIZE);
-    return { frame: { ...frame, x: left, w: right - left } };
+  // The photo isn't distorted: it grows only if the frame outgrows it.
+  // Text height follows its lines, so for text this sets the wrap width.
+  stretch({ frame, image, handle }, dx, dy, targets) {
+    const next = moveEdges(frame, handle, dx, dy, targets);
+    return { frame: next, ...(image && { image: growToCover(image, next) }) };
   },
 
   crop({ frame, image, handle }, dx, dy, targets) {
-    const snapX = targets ? targets.x.snap : (v) => v;
-    const snapY = targets ? targets.y.snap : (v) => v;
-    let left = frame.x;
-    let top = frame.y;
-    let right = frame.x + frame.w;
-    let bottom = frame.y + frame.h;
-    if (handle.includes('w')) left = clamp(snapX(left + dx), image.x, right - MIN_SIZE);
-    if (handle.includes('e')) right = clamp(snapX(right + dx), left + MIN_SIZE, image.x + image.w);
-    if (handle.includes('n')) top = clamp(snapY(top + dy), image.y, bottom - MIN_SIZE);
-    if (handle.includes('s')) bottom = clamp(snapY(bottom + dy), top + MIN_SIZE, image.y + image.h);
-    return { frame: rectFromPoints({ x: left, y: top }, { x: right, y: bottom }), image };
+    return { frame: moveEdges(frame, handle, dx, dy, targets, rectEdges(image)), image };
   },
 
   // Slides the image under a fixed frame, keeping the frame covered.
   pan({ frame, image }, dx, dy) {
-    const x = clamp(image.x + dx, frame.x + frame.w - image.w, frame.x);
-    const y = clamp(image.y + dy, frame.y + frame.h - image.h, frame.y);
-    return { frame, image: { ...image, x, y } };
+    return { frame, image: growToCover(offsetRect(image, dx, dy), frame) };
   },
 };
 
