@@ -10,7 +10,23 @@ export const scaleRect = (r, k, from, to = from) => ({
   h: r.h * k,
 });
 
-export const rectCenter = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+export function unionRect(rects) {
+  const x = Math.min(...rects.map((r) => r.x));
+  const y = Math.min(...rects.map((r) => r.y));
+  const right = Math.max(...rects.map((r) => r.x + r.w));
+  const bottom = Math.max(...rects.map((r) => r.y + r.h));
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+export const intersects = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** The rectangle spanning two corner points, in either order. */
+export const rectFromPoints = (p, q) => ({
+  x: Math.min(p.x, q.x),
+  y: Math.min(p.y, q.y),
+  w: Math.abs(p.x - q.x),
+  h: Math.abs(p.y - q.y),
+});
 
 /** Start, center and end of `r` along `axis` ('x' or 'y'). */
 export const alignLines = (r, axis) =>

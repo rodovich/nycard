@@ -7,19 +7,23 @@ import {
   getState,
   itemsOnSide,
   loadAssetUrls,
+  offsetItem,
   placeAsset,
   removeAsset,
-  removeItem,
+  removeItems,
   restack,
   select,
+  selectedItems,
   setOrientation,
   subscribe,
   toggleCrop,
+  toggleSelected,
   update,
   updateItem,
+  updateItems,
 } from './store.js';
 import { bleedRect, canvasSize, DPI, safeRect, SIDES, specSummary, trimRect } from './specs.js';
-import { alignLines, clamp, offsetRect, scaleRect } from './geometry.js';
+import { alignLines, clamp, intersects, offsetRect, rectFromPoints, scaleRect, unionRect } from './geometry.js';
 import { snapper } from './snap.js';
 import { downloadCard } from './export.js';
 
@@ -27,12 +31,13 @@ const ASSET_MIME = 'application/x-nycard-asset';
 const MIN_SIZE = 30; // print px
 const LOW_DPI = 200;
 const SNAP_SCREEN_PX = 6;
+const CLICK_SLOP_PX = 3;
 const $ = (sel, root = document) => root.querySelector(sel);
 
 const cards = {};
 let scale = 1;
-/** Alignment lines to draw on one side during a drag: `{ side, x: [...], y: [...] }`. */
-let snapLines = null;
+/** Feedback drawn on one side during a pointer drag: `{ side, lines?: { x, y }, marquee?: rect }`. */
+let dragHints = null;
 
 function el(tag, className, parent) {
   const e = document.createElement(tag);
@@ -56,21 +61,30 @@ function setSrc(img, url) {
   if (img.getAttribute('src') !== url) img.src = url;
 }
 
+function cardPoint(side, ev) {
+  const box = cards[side].card.getBoundingClientRect();
+  return { x: (ev.clientX - box.left - box.width / 2) / scale, y: (ev.clientY - box.top - box.height / 2) / scale };
+}
+
 function buildCard(side) {
   const card = $(`.side[data-side="${side}"] .card`);
   const surface = el('div', 'surface', card);
-  const items = el('div', 'items', surface);
-  const guides = el('div', 'guides', surface);
+  const surfaceOrigin = el('div', 'origin', surface);
+  const items = el('div', 'items', surfaceOrigin);
+  const guides = el('div', 'guides', surfaceOrigin);
   const trim = el('div', 'trim', guides);
   const safe = el('div', 'safe', guides);
   const overlay = el('div', 'overlay', card);
-  const ghost = el('img', 'ghost', overlay);
-  const lines = el('div', 'snap-lines', overlay);
-  const selection = el('div', 'selection', overlay);
+  const overlayOrigin = el('div', 'origin', overlay);
+  const ghost = el('img', 'ghost', overlayOrigin);
+  const lines = el('div', 'snap-lines', overlayOrigin);
+  const outlines = el('div', 'outlines', overlayOrigin);
+  const selection = el('div', 'selection', overlayOrigin);
   for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
     el('div', `handle ${h}`, selection).dataset.handle = h;
   }
-  cards[side] = { card, surface, items, guides, trim, safe, overlay, ghost, lines, selection, els: new Map() };
+  const marquee = el('div', 'marquee', overlayOrigin);
+  cards[side] = { card, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, els: new Map() };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
   card.addEventListener('dblclick', (e) => {
@@ -118,77 +132,119 @@ function renderCard(side) {
     setSrc(img, assetUrl(item.assetId));
     place(e, item.frame);
     place(img, { ...item.image, x: item.image.x - item.frame.x, y: item.image.y - item.frame.y });
-    e.classList.toggle('selected', item.id === s.selectedId);
   });
 
-  const selected = items.find((i) => i.id === s.selectedId);
-  c.selection.hidden = !selected;
-  const cropping = selected && selected.id === s.cropId;
+  const selected = selectedItems().filter((i) => i.side === side);
+  const single = s.selectedIds.length === 1 ? selected[0] : undefined;
+  c.outlines.replaceChildren();
+  if (!single) for (const i of selected) place(el('div', null, c.outlines), i.frame);
+  c.selection.hidden = !single;
+  const cropping = single && single.id === s.cropId;
   c.ghost.hidden = !cropping;
-  if (selected) {
-    place(c.selection, selected.frame);
+  if (single) {
+    place(c.selection, single.frame);
     c.selection.classList.toggle('cropping', !!cropping);
   }
   if (cropping) {
-    setSrc(c.ghost, assetUrl(selected.assetId));
-    place(c.ghost, selected.image);
+    setSrc(c.ghost, assetUrl(single.assetId));
+    place(c.ghost, single.image);
   }
 
+  const hints = dragHints?.side === side ? dragHints : {};
   c.lines.replaceChildren();
-  if (snapLines?.side === side) {
-    for (const x of snapLines.x) place(el('div', 'v', c.lines), { x, y: 0, w: 0, h });
-    for (const y of snapLines.y) place(el('div', 'h', c.lines), { x: 0, y, w, h: 0 });
-  }
+  const card = bleedRect(s.orientation);
+  for (const x of hints.lines?.x ?? []) place(el('div', null, c.lines), { ...card, x, w: 0 });
+  for (const y of hints.lines?.y ?? []) place(el('div', null, c.lines), { ...card, y, h: 0 });
+  c.marquee.hidden = !hints.marquee;
+  if (hints.marquee) place(c.marquee, hints.marquee);
+}
+
+function trackPointer(e, onMove, onClick) {
+  const target = e.target;
+  target.setPointerCapture(e.pointerId);
+  let moved = false;
+  const move = (ev) => {
+    moved ||= Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > CLICK_SLOP_PX;
+    if (moved) onMove(ev);
+  };
+  const end = () => {
+    dragHints = null;
+    if (!moved) onClick?.();
+    render();
+    target.removeEventListener('pointermove', move);
+    target.removeEventListener('pointerup', end);
+    target.removeEventListener('pointercancel', end);
+  };
+  target.addEventListener('pointermove', move);
+  target.addEventListener('pointerup', end);
+  target.addEventListener('pointercancel', end);
 }
 
 function onPointerDown(e, side) {
   if (e.button !== 0) return;
-  const handle = e.target.dataset.handle;
-  const itemId = handle ? getState().selectedId : e.target.closest('.item')?.dataset.id;
-  if (!itemId) {
-    select(null);
-    return;
-  }
   e.preventDefault();
-  select(itemId);
-  const item = getItem(itemId);
-  const cropping = getState().cropId === itemId;
-  const start = {
-    x: e.clientX,
-    y: e.clientY,
-    frame: { ...item.frame },
-    image: { ...item.image },
-    mode: handle ? (cropping ? 'crop' : 'resize') : cropping ? 'pan' : 'move',
-    handle,
-  };
-  const targets = snapTargets(side, itemId);
-  const target = e.target;
-  target.setPointerCapture(e.pointerId);
-  const move = (ev) => {
-    const dx = (ev.clientX - start.x) / scale;
-    const dy = (ev.clientY - start.y) / scale;
-    const snapping = !ev.altKey && start.mode !== 'pan';
-    const next = drag[start.mode](start, dx, dy, snapping ? targets : null);
-    snapLines = snapping
-      ? { side, x: targets.x.touching(alignLines(next.frame, 'x')), y: targets.y.touching(alignLines(next.frame, 'y')) }
-      : null;
-    updateItem(itemId, next);
-  };
-  const up = () => {
-    snapLines = null;
-    render();
-    target.removeEventListener('pointermove', move);
-    target.removeEventListener('pointerup', up);
-    target.removeEventListener('pointercancel', up);
-  };
-  target.addEventListener('pointermove', move);
-  target.addEventListener('pointerup', up);
-  target.addEventListener('pointercancel', up);
+  const handle = e.target.dataset.handle;
+  const hitId = e.target.closest('.item')?.dataset.id;
+  if (handle) return startDrag(e, side, handle);
+  if (!hitId) return startMarquee(e, side);
+  if (e.shiftKey) return toggleSelected(hitId);
+  if (!getState().selectedIds.includes(hitId)) select([hitId]);
+  // Keep a multi-selection so it can be dragged as a group; a click without dragging narrows it.
+  startDrag(e, side, null, () => select([hitId]));
 }
 
-function snapTargets(side, itemId) {
+function startMarquee(e, side) {
+  const base = e.shiftKey ? getState().selectedIds : [];
+  const from = cardPoint(side, e);
+  select(base);
+  trackPointer(e, (ev) => {
+    const marquee = rectFromPoints(from, cardPoint(side, ev));
+    const hits = itemsOnSide(side).filter((i) => intersects(i.frame, marquee));
+    dragHints = { side, marquee };
+    select(new Set([...base, ...hits.map((i) => i.id)]));
+  });
+}
+
+function startDrag(e, side, handle, onClick) {
+  const { selectedIds, cropId } = getState();
+  const starts = selectedItems()
+    .filter((i) => i.side === side)
+    .map((i) => ({ id: i.id, frame: { ...i.frame }, image: { ...i.image }, handle }));
+  const cropping = starts.length === 1 && cropId === starts[0].id;
+  const mode = handle ? (cropping ? 'crop' : 'resize') : cropping ? 'pan' : 'move';
+  const bounds = unionRect(starts.map((st) => st.frame));
+  const targets = snapTargets(side, selectedIds);
+  trackPointer(e, (ev) => {
+    const dx = (ev.clientX - e.clientX) / scale;
+    const dy = (ev.clientY - e.clientY) / scale;
+    const snapping = !ev.altKey && mode !== 'pan';
+    let patches;
+    let shown;
+    if (mode === 'move') {
+      let mx = dx;
+      let my = dy;
+      if (snapping) {
+        const moved = offsetRect(bounds, dx, dy);
+        mx += targets.x.delta(alignLines(moved, 'x'));
+        my += targets.y.delta(alignLines(moved, 'y'));
+      }
+      patches = starts.map((st) => [st.id, offsetItem(st, mx, my)]);
+      shown = offsetRect(bounds, mx, my);
+    } else {
+      const next = drag[mode](starts[0], dx, dy, snapping ? targets : null);
+      patches = [[starts[0].id, next]];
+      shown = next.frame;
+    }
+    dragHints = snapping
+      ? { side, lines: { x: targets.x.touching(alignLines(shown, 'x')), y: targets.y.touching(alignLines(shown, 'y')) } }
+      : null;
+    updateItems(patches);
+  }, onClick);
+}
+
+function snapTargets(side, excludeIds) {
   const { orientation } = getState();
-  const others = itemsOnSide(side).filter((i) => i.id !== itemId);
+  const others = itemsOnSide(side).filter((i) => !excludeIds.includes(i.id));
   const rects = [bleedRect(orientation), trimRect(orientation), safeRect(orientation), ...others.map((i) => i.frame)];
   const axis = (a) => snapper(rects.flatMap((r) => alignLines(r, a)), SNAP_SCREEN_PX / scale);
   return { x: axis('x'), y: axis('y') };
@@ -196,15 +252,6 @@ function snapTargets(side, itemId) {
 
 // `targets` is null when snapping is off.
 const drag = {
-  move({ frame, image }, dx, dy, targets) {
-    if (targets) {
-      const moved = offsetRect(frame, dx, dy);
-      dx += targets.x.delta(alignLines(moved, 'x'));
-      dy += targets.y.delta(alignLines(moved, 'y'));
-    }
-    return { frame: offsetRect(frame, dx, dy), image: offsetRect(image, dx, dy) };
-  },
-
   resize({ frame, image, handle }, dx, dy, targets) {
     const sx = handle.includes('w') ? -1 : 1;
     const sy = handle.includes('n') ? -1 : 1;
@@ -235,7 +282,7 @@ const drag = {
     if (handle.includes('e')) right = clamp(snapX(right + dx), left + MIN_SIZE, image.x + image.w);
     if (handle.includes('n')) top = clamp(snapY(top + dy), image.y, bottom - MIN_SIZE);
     if (handle.includes('s')) bottom = clamp(snapY(bottom + dy), top + MIN_SIZE, image.y + image.h);
-    return { frame: { x: left, y: top, w: right - left, h: bottom - top }, image };
+    return { frame: rectFromPoints({ x: left, y: top }, { x: right, y: bottom }), image };
   },
 
   // Slides the image under a fixed frame, keeping the frame covered.
@@ -249,23 +296,30 @@ const drag = {
 function renderToolbar() {
   const s = getState();
   const bar = $('#toolbar');
-  const item = getItem(s.selectedId);
+  const items = selectedItems();
   bar.replaceChildren();
-  if (!item) {
+  if (!items.length) {
     el('span', 'hint', bar).textContent = s.items.length
-      ? 'Click an image to select it. Double-click to crop. Hold Option (Alt) while dragging to stop snapping.'
+      ? 'Click an image to select it; Shift-click or drag a box to select several. Double-click to crop. Hold Option (Alt) while dragging to stop snapping.'
       : 'Add images from the panel on the right, then place them on the front or back.';
     return;
   }
-  const cropping = s.cropId === item.id;
-  const other = SIDES.find((side) => side !== item.side);
-  button(bar, cropping ? 'Done cropping' : 'Crop', () => toggleCrop(item.id), cropping ? 'active' : '');
-  button(bar, 'Fill card', () => fillCard(item.id));
-  button(bar, 'Uncrop', () => updateItem(item.id, { frame: { ...item.image } }));
-  button(bar, 'Forward', () => restack(item.id, 1));
-  button(bar, 'Backward', () => restack(item.id, -1));
-  button(bar, `Move to ${other}`, () => updateItem(item.id, { side: other }));
-  button(bar, 'Delete', () => removeItem(item.id), 'danger');
+  const [item] = items;
+  if (items.length > 1) {
+    el('span', 'hint', bar).textContent = `${items.length} images selected`;
+  } else {
+    const cropping = s.cropId === item.id;
+    button(bar, cropping ? 'Done cropping' : 'Crop', () => toggleCrop(item.id), cropping ? 'active' : '');
+    button(bar, 'Fill card', () => fillCard(item.id));
+    button(bar, 'Uncrop', () => updateItem(item.id, { frame: { ...item.image } }));
+    button(bar, 'Forward', () => restack(item.id, 1));
+    button(bar, 'Backward', () => restack(item.id, -1));
+  }
+  const sides = new Set(items.map((i) => i.side));
+  const other = sides.size === 1 && SIDES.find((side) => !sides.has(side));
+  if (other) button(bar, `Move to ${other}`, () => updateItems(items.map((i) => [i.id, { side: other }])));
+  button(bar, 'Delete', () => removeItems(items.map((i) => i.id)), 'danger');
+  if (items.length > 1) return;
 
   const asset = getAsset(item.assetId);
   const dpi = Math.round(asset.width / (item.image.w / DPI));
@@ -301,10 +355,8 @@ function renderTray() {
 async function onCardDrop(e, side) {
   e.preventDefault();
   e.stopPropagation();
-  const { card } = cards[side];
-  card.classList.remove('drop-target');
-  const box = card.getBoundingClientRect();
-  const at = { x: (e.clientX - box.left) / scale, y: (e.clientY - box.top) / scale };
+  cards[side].card.classList.remove('drop-target');
+  const at = cardPoint(side, e);
   const assetId = e.dataTransfer.getData(ASSET_MIME);
   if (assetId) return placeAsset(assetId, side, at);
   const added = await addFiles(e.dataTransfer.files);
@@ -364,19 +416,19 @@ function setupKeyboard() {
   window.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea')) return;
     const s = getState();
-    const item = getItem(s.selectedId);
+    const items = selectedItems();
     if (e.key === 'Escape') {
       if (s.cropId) toggleCrop(s.cropId);
-      else select(null);
-    } else if (item && (e.key === 'Delete' || e.key === 'Backspace')) {
+      else select([]);
+    } else if (items.length && (e.key === 'Delete' || e.key === 'Backspace')) {
       e.preventDefault();
-      removeItem(item.id);
-    } else if (item && e.key.startsWith('Arrow')) {
+      removeItems(items.map((i) => i.id));
+    } else if (items.length && e.key.startsWith('Arrow')) {
       e.preventDefault();
       const step = e.shiftKey ? 30 : 3;
       const dx = { ArrowLeft: -step, ArrowRight: step }[e.key] ?? 0;
       const dy = { ArrowUp: -step, ArrowDown: step }[e.key] ?? 0;
-      updateItem(item.id, drag.move(item, dx, dy));
+      updateItems(items.map((i) => [i.id, offsetItem(i, dx, dy)]));
     }
   });
 }

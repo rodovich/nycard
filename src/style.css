@@ -210,12 +210,25 @@ main {
   opacity: 0.35;
 }
 
+.origin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+}
+
+.marquee {
+  position: absolute;
+  background: rgb(47 125 225 / 0.12);
+  outline: calc(1px / var(--scale)) solid #2f7de1;
+}
+
 .snap-lines > div {
   position: absolute;
   outline: calc(0.5px / var(--scale)) solid #e0249a;
 }
 
-.selection {
+.selection,
+.outlines > div {
   position: absolute;
   outline: calc(2px / var(--scale)) solid #2f7de1;
 }

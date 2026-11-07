@@ -1,16 +1,17 @@
 import { putBlob, getBlob, deleteBlob } from './blobs.js';
 import { bleedRect, canvasSize, trimRect } from './specs.js';
-import { containRect, coverRect, rectCenter, scaleRect } from './geometry.js';
+import { containRect, coverRect, offsetRect } from './geometry.js';
 
-const KEY = 'nycard.design.v1';
+const KEY = 'nycard.design.v2';
+const V1_KEY = 'nycard.design.v1';
 
 /**
- * Item geometry is in print pixels on the full-bleed canvas.
+ * Item geometry is in print pixels, with the origin at the center of the card.
  * `frame` is the visible (cropped) rectangle; `image` is where the whole
  * source image sits, so cropping is the part of `image` inside `frame`.
  */
 function initialState() {
-  return { orientation: 'portrait', assets: [], items: [], selectedId: null, cropId: null, showGuides: true };
+  return { orientation: 'portrait', assets: [], items: [], selectedIds: [], cropId: null, showGuides: true };
 }
 
 let state = load();
@@ -18,30 +19,26 @@ const listeners = new Set();
 const urls = new Map();
 
 function load() {
-  let saved;
   try {
-    saved = JSON.parse(localStorage.getItem(KEY));
+    const saved = JSON.parse(localStorage.getItem(KEY)) ?? fromV1(JSON.parse(localStorage.getItem(V1_KEY)));
+    return { ...initialState(), ...saved };
   } catch (e) {
     console.warn('Discarding unreadable saved design', e);
+    return initialState();
   }
-  const s = { ...initialState(), ...saved };
-  const size = canvasSize(s.orientation);
-  // Designs saved before a change to the print specs were laid out on a different canvas.
-  if (s.canvas && (s.canvas.w !== size.w || s.canvas.h !== size.h)) {
-    for (const item of s.items) stretchItem(item, s.canvas, size);
-  }
-  s.canvas = size;
-  return s;
 }
 
-/** Scaling the image by the larger axis factor keeps it covering the stretched frame. */
-function stretchItem(item, from, to) {
-  const kx = to.w / from.w;
-  const ky = to.h / from.h;
-  const { frame, image } = item;
-  const center = rectCenter(frame);
-  item.frame = { x: frame.x * kx, y: frame.y * ky, w: frame.w * kx, h: frame.h * ky };
-  item.image = scaleRect(image, Math.max(kx, ky), center, rectCenter(item.frame));
+/** v1 measured from the top-left corner of the bleed and had a single selection. */
+function fromV1(v1) {
+  if (!v1) return null;
+  const { w, h } = v1.canvas ?? canvasSize(v1.orientation);
+  const { selectedId, canvas, ...rest } = v1;
+  const items = rest.items.map((item) => ({ ...item, ...offsetItem(item, -w / 2, -h / 2) }));
+  return { ...rest, items, selectedIds: selectedId ? [selectedId] : [] };
+}
+
+export function offsetItem({ frame, image }, dx, dy) {
+  return { frame: offsetRect(frame, dx, dy), image: offsetRect(image, dx, dy) };
 }
 
 export const getState = () => state;
@@ -58,20 +55,33 @@ export const assetUrl = (id) => urls.get(id);
 export const getAsset = (id) => state.assets.find((a) => a.id === id);
 export const getItem = (id) => state.items.find((i) => i.id === id);
 export const itemsOnSide = (side, s = state) => s.items.filter((i) => i.side === side);
+export const selectedItems = () => state.items.filter((i) => state.selectedIds.includes(i.id));
 
-export function updateItem(id, patch) {
-  update(() => Object.assign(getItem(id) ?? {}, patch));
-}
-
-export function select(id) {
-  update((s) => {
-    if (s.selectedId !== id) s.cropId = null;
-    s.selectedId = id;
+export function updateItems(patches) {
+  update(() => {
+    for (const [id, patch] of patches) Object.assign(getItem(id) ?? {}, patch);
   });
 }
 
+export const updateItem = (id, patch) => updateItems([[id, patch]]);
+
+export function select(ids) {
+  update((s) => {
+    s.selectedIds = [...ids];
+    if (s.selectedIds.length !== 1 || s.selectedIds[0] !== s.cropId) s.cropId = null;
+  });
+}
+
+export function toggleSelected(id) {
+  const ids = state.selectedIds;
+  select(ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]);
+}
+
 export function toggleCrop(id) {
-  update((s) => (s.cropId = s.cropId === id ? null : id));
+  update((s) => {
+    s.cropId = s.cropId === id ? null : id;
+    if (s.cropId) s.selectedIds = [id];
+  });
 }
 
 /** Call once before first render. */
@@ -106,20 +116,18 @@ export async function addFiles(files) {
 }
 
 export function removeAsset(id) {
-  update((s) => {
-    s.assets = s.assets.filter((a) => a.id !== id);
-    s.items = s.items.filter((i) => i.assetId !== id);
-    if (!getItem(s.selectedId)) s.selectedId = s.cropId = null;
-  });
+  removeItems(state.items.filter((i) => i.assetId === id).map((i) => i.id));
+  update((s) => (s.assets = s.assets.filter((a) => a.id !== id)));
   URL.revokeObjectURL(urls.get(id));
   urls.delete(id);
   deleteBlob(id);
 }
 
-export function removeItem(id) {
+export function removeItems(ids) {
   update((s) => {
-    s.items = s.items.filter((i) => i.id !== id);
-    s.selectedId = s.cropId = null;
+    s.items = s.items.filter((i) => !ids.includes(i.id));
+    s.selectedIds = s.selectedIds.filter((id) => !ids.includes(id));
+    if (ids.includes(s.cropId)) s.cropId = null;
   });
 }
 
@@ -128,7 +136,7 @@ export function fillCard(id) {
   updateItem(id, { frame, image: coverRect(getAsset(getItem(id).assetId), frame) });
 }
 
-export function placeAsset(assetId, side, at) {
+export function placeAsset(assetId, side, at = { x: 0, y: 0 }) {
   const asset = getAsset(assetId);
   if (!itemsOnSide(side).length) {
     const frame = bleedRect(state.orientation);
@@ -136,15 +144,14 @@ export function placeAsset(assetId, side, at) {
     return;
   }
   const { w, h } = trimRect(state.orientation);
-  const { x, y } = at ?? rectCenter(bleedRect(state.orientation));
-  const rect = containRect(asset, { x: x - w / 4, y: y - h / 4, w: w / 2, h: h / 2 });
+  const rect = containRect(asset, { x: at.x - w / 4, y: at.y - h / 4, w: w / 2, h: h / 2 });
   addItem({ assetId, side, frame: rect, image: { ...rect } });
 }
 
 function addItem(item) {
   const id = crypto.randomUUID();
   update((s) => s.items.push({ id, ...item }));
-  select(id);
+  select([id]);
 }
 
 export function restack(id, dir) {
@@ -159,20 +166,6 @@ export function restack(id, dir) {
   });
 }
 
-/** Rescales every item about the card center so the design survives an orientation change. */
 export function setOrientation(orientation) {
-  if (orientation === state.orientation) return;
-  const from = canvasSize(state.orientation);
-  const to = canvasSize(orientation);
-  const k = Math.min(to.w / from.w, to.h / from.h);
-  const fromCenter = { x: from.w / 2, y: from.h / 2 };
-  const toCenter = { x: to.w / 2, y: to.h / 2 };
-  update((s) => {
-    s.orientation = orientation;
-    s.canvas = to;
-    for (const item of s.items) {
-      item.frame = scaleRect(item.frame, k, fromCenter, toCenter);
-      item.image = scaleRect(item.image, k, fromCenter, toCenter);
-    }
-  });
+  update((s) => (s.orientation = orientation));
 }

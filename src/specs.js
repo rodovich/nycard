@@ -23,7 +23,10 @@ export function canvasSize(orientation) {
 
 const inset = (r, d) => ({ x: r.x + d, y: r.y + d, w: r.w - 2 * d, h: r.h - 2 * d });
 
-export const bleedRect = (orientation) => ({ x: 0, y: 0, ...canvasSize(orientation) });
+export function bleedRect(orientation) {
+  const { w, h } = canvasSize(orientation);
+  return { x: -w / 2, y: -h / 2, w, h };
+}
 export const trimRect = (orientation) => inset(bleedRect(orientation), BLEED_PX);
 export const safeRect = (orientation) => inset(trimRect(orientation), SAFE_PX);
 

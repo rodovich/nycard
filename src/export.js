@@ -11,6 +11,7 @@ async function renderSide(design, side) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, w, h);
   ctx.imageSmoothingQuality = 'high';
+  ctx.translate(w / 2, h / 2);
   for (const { assetId, frame: f, image: r } of itemsOnSide(side, design)) {
     const bitmap = await createImageBitmap(await getBlob(assetId));
     ctx.save();
