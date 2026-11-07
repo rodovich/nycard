@@ -84,6 +84,7 @@ function attachPopover(trigger, panel, onOpen) {
   panel.classList.add('popover-panel');
   panel.popover = 'auto';
   trigger.popoverTargetElement = panel;
+  panel.addEventListener('click', (e) => e.target.closest('button') && panel.hidePopover());
   panel.addEventListener('beforetoggle', (e) => {
     if (e.newState !== 'open') return;
     onOpen?.();
@@ -108,10 +109,7 @@ function colorPicker(parent, label, onPick) {
   const palette = el('div', 'palette', root);
   attachPopover(current, palette);
   const swatches = PALETTE.map((color) => {
-    const b = button(palette, '', () => {
-      palette.hidePopover();
-      onPick(color);
-    }, 'swatch');
+    const b = button(palette, '', () => onPick(color), 'swatch');
     b.style.background = b.title = color;
     return b;
   });
@@ -124,7 +122,7 @@ function colorPicker(parent, label, onPick) {
 }
 
 function layoutPicker(parent, side) {
-  const trigger = button(parent, 'Layouts…', null, 'layouts');
+  const trigger = button(parent, 'Layouts');
   const panel = el('div', 'layout-panel', parent);
   attachPopover(trigger, panel, () => {
     const { orientation } = getState();
@@ -134,10 +132,7 @@ function layoutPicker(parent, side) {
       el('h3', null, panel).textContent = count === 1 ? '1 photo' : `${count} photos`;
       const row = el('div', 'layout-row', panel);
       for (const layout of layouts.filter((l) => l.images.length === count)) {
-        const b = button(row, '', () => {
-          panel.hidePopover();
-          applyLayout(side, layoutSlots(layout, orientation));
-        }, 'layout-thumb');
+        const b = button(row, '', () => applyLayout(side, layoutSlots(layout, orientation)), 'layout-thumb');
         b.title = layout.name;
         drawThumb(b, layout, orientation);
       }
@@ -158,15 +153,47 @@ function drawThumb(parent, { images, texts }, orientation) {
   }
 }
 
-function choosePhotoFor(placeholderId) {
-  const input = el('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.addEventListener('change', async () => {
-    const [asset] = await addFiles(input.files);
-    if (asset) fillPlaceholder(placeholderId, asset.id);
+/** Resolves to [] if canceled. */
+function pickImages(multiple) {
+  return new Promise((resolve) => {
+    const input = el('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = multiple;
+    input.addEventListener('change', async () => resolve(await addFiles(input.files)));
+    input.addEventListener('cancel', () => resolve([]));
+    input.click();
   });
-  input.click();
+}
+
+async function choosePhotoFor(placeholderId) {
+  const [asset] = await pickImages(false);
+  if (asset) fillPlaceholder(placeholderId, asset.id);
+}
+
+function imagePicker(parent, side) {
+  const trigger = button(parent, 'Add image');
+  const panel = el('div', 'image-panel', parent);
+  attachPopover(trigger, panel, () => {
+    panel.replaceChildren();
+    const { assets } = getState();
+    if (assets.length) {
+      const grid = el('div', 'image-grid', panel);
+      for (const asset of assets) {
+        const b = button(grid, '', () => placeAsset(asset.id, side));
+        b.title = asset.name;
+        const img = el('img', null, b);
+        img.src = assetUrl(asset.id);
+        img.alt = asset.name;
+      }
+    }
+    button(panel, 'Upload new…', async () => {
+      (await pickImages(true)).forEach((asset, i) => {
+        const fillsPlaceholder = itemsOnSide(side).some(isPlaceholder);
+        placeAsset(asset.id, side, fillsPlaceholder ? undefined : { x: i * 60, y: i * 60 });
+      });
+    });
+  });
 }
 
 const JUSTIFY = { left: 'flex-start', center: 'center', right: 'flex-end' };
@@ -206,6 +233,8 @@ function buildCard(side) {
   const figure = $(`.side[data-side="${side}"]`);
   const card = $('.card', figure);
   const caption = $('figcaption', figure);
+  imagePicker(caption, side);
+  button(caption, 'Add text', () => startEditing(addText(side)));
   layoutPicker(caption, side);
   const picker = colorPicker(caption, 'Background', (color) => update((s) => (s.backgrounds[side] = color)));
   const surface = el('div', 'surface', card);
@@ -256,6 +285,8 @@ function renderCard(side) {
   const { w, h } = canvasSize(s.orientation);
   c.card.style.width = `${w * scale}px`;
   c.card.style.height = `${h * scale}px`;
+  // Keeps the toolbar above the card from widening the side beyond the card; it wraps instead.
+  c.card.parentElement.style.width = c.card.style.width;
   c.card.style.setProperty('--scale', scale);
   for (const layer of [c.surface, c.overlay]) Object.assign(layer.style, { width: `${w}px`, height: `${h}px` });
   c.surface.style.background = s.backgrounds[side];
@@ -505,7 +536,7 @@ function buildToolbar(items) {
   if (!items.length) {
     el('span', 'hint', bar).textContent = s.items.length
       ? 'Click to select; Shift-click or drag a box to select several. Double-click an image to crop it, or text to edit it. Hold Option (Alt) while dragging to stop snapping.'
-      : 'Add images or text from the panel on the right, or pick a layout above either side.';
+      : 'Use the buttons above each side to add photos, text, or a layout.';
     return;
   }
   const [item] = items;
@@ -613,9 +644,7 @@ function renderTray() {
     const name = el('span', 'name', li);
     name.textContent = asset.name;
     name.title = `${asset.name} (${asset.width}×${asset.height})`;
-    const actions = el('div', 'actions', li);
-    sideButtons(actions, (side) => placeAsset(asset.id, side));
-    button(actions, '×', () => removeAsset(asset.id), 'remove').title = 'Remove from project';
+    button(li, '×', () => removeAsset(asset.id), 'remove').title = 'Remove from project';
   }
 }
 
@@ -634,17 +663,9 @@ async function onCardDrop(e, side) {
   added.forEach((a, i) => put(a.id, i));
 }
 
-function sideButtons(parent, onPick) {
-  for (const side of SIDES) button(parent, `+ ${side}`, () => onPick(side), 'capitalize');
-}
-
 function setupFileInputs() {
-  const input = $('#file-input');
-  input.addEventListener('change', async () => {
-    await addFiles(input.files);
-    input.value = '';
-  });
   const zone = $('#dropzone');
+  zone.addEventListener('click', () => pickImages(true));
   window.addEventListener('dragover', (e) => {
     e.preventDefault();
     zone.classList.toggle('drop-target', zone.contains(e.target));
@@ -739,11 +760,12 @@ async function main() {
   refitText();
   SIDES.forEach(buildCard);
   setupHeader();
-  sideButtons($('#add-text'), (side) => startEditing(addText(side)));
   setupFileInputs();
   setupKeyboard();
   subscribe(render);
-  new ResizeObserver(render).observe($('#stage'));
+  const resizes = new ResizeObserver(render);
+  resizes.observe($('#stage'));
+  resizes.observe($('figcaption'));
   render();
 }
 

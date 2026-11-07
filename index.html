@@ -24,22 +24,20 @@
         <div id="toolbar"></div>
         <section id="stage">
           <figure class="side" data-side="front">
-            <figcaption>Front</figcaption>
+            <figcaption><span class="side-label">Front</span></figcaption>
             <div class="card"></div>
           </figure>
           <figure class="side" data-side="back">
-            <figcaption>Back</figcaption>
+            <figcaption><span class="side-label">Back</span></figcaption>
             <div class="card"></div>
           </figure>
         </section>
       </div>
       <aside id="tray">
-        <label id="dropzone">
-          <input type="file" id="file-input" accept="image/*" multiple hidden />
-          <strong>Add images</strong>
-          <span>Click to browse, or drop files here or onto either side of the card.</span>
-        </label>
-        <div id="add-text"><strong>Add text</strong></div>
+        <button id="dropzone">
+          <strong>Upload photos</strong>
+          <span>Click to browse, or drop files here or onto the card.</span>
+        </button>
         <ul id="assets"></ul>
       </aside>
     </main>
