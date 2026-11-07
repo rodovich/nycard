@@ -12,6 +12,10 @@ export const scaleRect = (r, k, from, to = from) => ({
 
 export const rectCenter = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
 
+/** Start, center and end of `r` along `axis` ('x' or 'y'). */
+export const alignLines = (r, axis) =>
+  axis === 'x' ? [r.x, r.x + r.w / 2, r.x + r.w] : [r.y, r.y + r.h / 2, r.y + r.h];
+
 export function coverRect(size, box) {
   return centeredIn(size, Math.max(box.w / size.width, box.h / size.height), box);
 }

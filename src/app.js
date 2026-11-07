@@ -18,17 +18,21 @@ import {
   update,
   updateItem,
 } from './store.js';
-import { canvasSize, DPI, safeRect, SIDES, specSummary, trimRect } from './specs.js';
-import { clamp, offsetRect, scaleRect } from './geometry.js';
+import { bleedRect, canvasSize, DPI, safeRect, SIDES, specSummary, trimRect } from './specs.js';
+import { alignLines, clamp, offsetRect, scaleRect } from './geometry.js';
+import { snapper } from './snap.js';
 import { downloadCard } from './export.js';
 
 const ASSET_MIME = 'application/x-nycard-asset';
 const MIN_SIZE = 30; // print px
 const LOW_DPI = 200;
+const SNAP_SCREEN_PX = 6;
 const $ = (sel, root = document) => root.querySelector(sel);
 
 const cards = {};
 let scale = 1;
+/** Alignment lines to draw on one side during a drag: `{ side, x: [...], y: [...] }`. */
+let snapLines = null;
 
 function el(tag, className, parent) {
   const e = document.createElement(tag);
@@ -61,11 +65,12 @@ function buildCard(side) {
   const safe = el('div', 'safe', guides);
   const overlay = el('div', 'overlay', card);
   const ghost = el('img', 'ghost', overlay);
+  const lines = el('div', 'snap-lines', overlay);
   const selection = el('div', 'selection', overlay);
   for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
     el('div', `handle ${h}`, selection).dataset.handle = h;
   }
-  cards[side] = { card, surface, items, guides, trim, safe, overlay, ghost, selection, els: new Map() };
+  cards[side] = { card, surface, items, guides, trim, safe, overlay, ghost, lines, selection, els: new Map() };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
   card.addEventListener('dblclick', (e) => {
@@ -128,6 +133,12 @@ function renderCard(side) {
     setSrc(c.ghost, assetUrl(selected.assetId));
     place(c.ghost, selected.image);
   }
+
+  c.lines.replaceChildren();
+  if (snapLines?.side === side) {
+    for (const x of snapLines.x) place(el('div', 'v', c.lines), { x, y: 0, w: 0, h });
+    for (const y of snapLines.y) place(el('div', 'h', c.lines), { x: 0, y, w, h: 0 });
+  }
 }
 
 function onPointerDown(e, side) {
@@ -150,14 +161,22 @@ function onPointerDown(e, side) {
     mode: handle ? (cropping ? 'crop' : 'resize') : cropping ? 'pan' : 'move',
     handle,
   };
+  const targets = snapTargets(side, itemId);
   const target = e.target;
   target.setPointerCapture(e.pointerId);
   const move = (ev) => {
     const dx = (ev.clientX - start.x) / scale;
     const dy = (ev.clientY - start.y) / scale;
-    updateItem(itemId, drag[start.mode](start, dx, dy));
+    const snapping = !ev.altKey && start.mode !== 'pan';
+    const next = drag[start.mode](start, dx, dy, snapping ? targets : null);
+    snapLines = snapping
+      ? { side, x: targets.x.touching(alignLines(next.frame, 'x')), y: targets.y.touching(alignLines(next.frame, 'y')) }
+      : null;
+    updateItem(itemId, next);
   };
   const up = () => {
+    snapLines = null;
+    render();
     target.removeEventListener('pointermove', move);
     target.removeEventListener('pointerup', up);
     target.removeEventListener('pointercancel', up);
@@ -167,27 +186,55 @@ function onPointerDown(e, side) {
   target.addEventListener('pointercancel', up);
 }
 
-const drag = {
-  move: ({ frame, image }, dx, dy) => ({ frame: offsetRect(frame, dx, dy), image: offsetRect(image, dx, dy) }),
+function snapTargets(side, itemId) {
+  const { orientation } = getState();
+  const others = itemsOnSide(side).filter((i) => i.id !== itemId);
+  const rects = [bleedRect(orientation), trimRect(orientation), safeRect(orientation), ...others.map((i) => i.frame)];
+  const axis = (a) => snapper(rects.flatMap((r) => alignLines(r, a)), SNAP_SCREEN_PX / scale);
+  return { x: axis('x'), y: axis('y') };
+}
 
-  resize({ frame, image, handle }, dx, dy) {
+// `targets` is null when snapping is off.
+const drag = {
+  move({ frame, image }, dx, dy, targets) {
+    if (targets) {
+      const moved = offsetRect(frame, dx, dy);
+      dx += targets.x.delta(alignLines(moved, 'x'));
+      dy += targets.y.delta(alignLines(moved, 'y'));
+    }
+    return { frame: offsetRect(frame, dx, dy), image: offsetRect(image, dx, dy) };
+  },
+
+  resize({ frame, image, handle }, dx, dy, targets) {
     const sx = handle.includes('w') ? -1 : 1;
     const sy = handle.includes('n') ? -1 : 1;
     const anchor = { x: sx > 0 ? frame.x : frame.x + frame.w, y: sy > 0 ? frame.y : frame.y + frame.h };
     let k = ((frame.w + sx * dx) / frame.w + (frame.h + sy * dy) / frame.h) / 2;
+    if (targets) {
+      // The aspect ratio is fixed, so only one of the dragged corner's two edges can snap.
+      const cx = anchor.x + sx * frame.w * k;
+      const cy = anchor.y + sy * frame.h * k;
+      const ddx = targets.x.delta([cx]);
+      const ddy = targets.y.delta([cy]);
+      const useX = ddx && (!ddy || Math.abs(ddx) <= Math.abs(ddy));
+      if (useX) k = (sx * (cx + ddx - anchor.x)) / frame.w;
+      else if (ddy) k = (sy * (cy + ddy - anchor.y)) / frame.h;
+    }
     k = Math.max(k, MIN_SIZE / Math.min(frame.w, frame.h));
     return { frame: scaleRect(frame, k, anchor), image: scaleRect(image, k, anchor) };
   },
 
-  crop({ frame, image, handle }, dx, dy) {
+  crop({ frame, image, handle }, dx, dy, targets) {
+    const snapX = targets ? targets.x.snap : (v) => v;
+    const snapY = targets ? targets.y.snap : (v) => v;
     let left = frame.x;
     let top = frame.y;
     let right = frame.x + frame.w;
     let bottom = frame.y + frame.h;
-    if (handle.includes('w')) left = clamp(left + dx, image.x, right - MIN_SIZE);
-    if (handle.includes('e')) right = clamp(right + dx, left + MIN_SIZE, image.x + image.w);
-    if (handle.includes('n')) top = clamp(top + dy, image.y, bottom - MIN_SIZE);
-    if (handle.includes('s')) bottom = clamp(bottom + dy, top + MIN_SIZE, image.y + image.h);
+    if (handle.includes('w')) left = clamp(snapX(left + dx), image.x, right - MIN_SIZE);
+    if (handle.includes('e')) right = clamp(snapX(right + dx), left + MIN_SIZE, image.x + image.w);
+    if (handle.includes('n')) top = clamp(snapY(top + dy), image.y, bottom - MIN_SIZE);
+    if (handle.includes('s')) bottom = clamp(snapY(bottom + dy), top + MIN_SIZE, image.y + image.h);
     return { frame: { x: left, y: top, w: right - left, h: bottom - top }, image };
   },
 
@@ -206,7 +253,7 @@ function renderToolbar() {
   bar.replaceChildren();
   if (!item) {
     el('span', 'hint', bar).textContent = s.items.length
-      ? 'Click an image to select it. Double-click to crop.'
+      ? 'Click an image to select it. Double-click to crop. Hold Option (Alt) while dragging to stop snapping.'
       : 'Add images from the panel on the right, then place them on the front or back.';
     return;
   }

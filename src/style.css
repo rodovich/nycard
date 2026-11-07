@@ -210,6 +210,11 @@ main {
   opacity: 0.35;
 }
 
+.snap-lines > div {
+  position: absolute;
+  outline: calc(0.5px / var(--scale)) solid #e0249a;
+}
+
 .selection {
   position: absolute;
   outline: calc(2px / var(--scale)) solid #2f7de1;
