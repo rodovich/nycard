@@ -1,3 +1,5 @@
+import { shapeInsets } from './shape.js';
+
 export const LINE_HEIGHT = 1.2;
 
 const measure = document.createElement('canvas').getContext('2d');
@@ -33,6 +35,19 @@ export function layoutLines(t) {
 
 export const textHeight = (t) => layoutLines(t).length * t.size * LINE_HEIGHT;
 
+/** Each line's vertical center within the frame and the slope to skew it by. */
+export function lineGeometry(t) {
+  const lines = layoutLines(t);
+  const { h } = t.frame;
+  const { top: [tl, tr], bottom: [bl, br] } = shapeInsets(t);
+  return lines.map((text, i) => {
+    const v = (i + 0.5) / lines.length;
+    const left = tl + v * (h - tl - bl);
+    const right = tr + v * (h - tr - br);
+    return { text, cy: (left + right) / 2, slope: (right - left) / t.frame.w };
+  });
+}
+
 /** Matches CSS line-box layout: the glyphs' ascent and descent are centered in each line. */
 export function drawText(ctx, t) {
   const { frame: f } = t;
@@ -42,8 +57,13 @@ export function drawText(ctx, t) {
   ctx.textBaseline = 'alphabetic';
   const { fontBoundingBoxAscent: ascent, fontBoundingBoxDescent: descent } = ctx.measureText('');
   const lineHeight = t.size * LINE_HEIGHT;
-  const x = { left: f.x, center: f.x + f.w / 2, right: f.x + f.w }[t.align];
-  layoutLines(t).forEach((line, i) => {
-    ctx.fillText(line, x, f.y + i * lineHeight + (lineHeight - ascent - descent) / 2 + ascent);
-  });
+  const x = { left: -f.w / 2, center: 0, right: f.w / 2 }[t.align];
+  const baseline = -lineHeight / 2 + (lineHeight - ascent - descent) / 2 + ascent;
+  for (const { text, cy, slope } of lineGeometry(t)) {
+    ctx.save();
+    ctx.translate(f.x + f.w / 2, f.y + cy);
+    ctx.transform(1, slope, 0, 1, 0, 0);
+    ctx.fillText(text, x, baseline);
+    ctx.restore();
+  }
 }

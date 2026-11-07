@@ -1,8 +1,9 @@
 import { putBlob, getBlob, deleteBlob } from './blobs.js';
 import { bleedRect, canvasSize, ptToPx, SIDES, trimRect } from './specs.js';
 import { defaultFamily } from './fonts.js';
-import { containRect, coverRect, offsetRect } from './geometry.js';
+import { clamp, containRect, coverRect, offsetRect } from './geometry.js';
 import { textHeight } from './text.js';
+import { imageDropLimit, slantedEdges, slantHeight } from './shape.js';
 
 const KEY = 'nycard.design.v2';
 const V1_KEY = 'nycard.design.v1';
@@ -84,7 +85,19 @@ export function updateItems(patches) {
   });
 }
 
-const fitText = (item) => (item.frame = { ...item.frame, h: textHeight(item) });
+const fitText = (item) => (item.frame = { ...item.frame, h: textHeight(item) + slantHeight(item) });
+
+export function clampDrop(item, type, drop) {
+  const limit = isText(item) ? (4 * textHeight(item)) / slantedEdges(type) : imageDropLimit(item, type);
+  return clamp(drop, -limit, limit);
+}
+
+export function setShape(id, type) {
+  const item = getItem(id);
+  if (type === 'rect') return updateItem(id, { shape: undefined });
+  const drop = item.shape?.drop || item.frame.w * 0.12;
+  updateItem(id, { shape: { type, drop: clampDrop(item, type, drop) } });
+}
 
 export const refitText = () => update((s) => s.items.filter(isText).forEach(fitText));
 
@@ -170,8 +183,8 @@ export function fillCard(id) {
 export function fillPlaceholder(id, assetId) {
   const index = state.items.findIndex((i) => i.id === id && isPlaceholder(i));
   if (index < 0) return false;
-  const { side, frame } = state.items[index];
-  update((s) => (s.items[index] = { id, side, assetId, ...coverFrame(assetId, frame) }));
+  const { side, frame, shape } = state.items[index];
+  update((s) => (s.items[index] = { id, side, shape, assetId, ...coverFrame(assetId, frame) }));
   select([id]);
   return true;
 }

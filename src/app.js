@@ -2,6 +2,7 @@ import {
   addFiles,
   addText,
   applyLayout,
+  clampDrop,
   assetUrl,
   fillCard,
   fillPlaceholder,
@@ -22,6 +23,7 @@ import {
   select,
   selectedItems,
   setOrientation,
+  setShape,
   subscribe,
   toggleCrop,
   toggleSelected,
@@ -35,7 +37,8 @@ import { snapper } from './snap.js';
 import { PALETTE } from './palette.js';
 import { LAYOUTS, layoutSlots } from './layouts.js';
 import { downloadCard } from './export.js';
-import { fontSpec, layoutLines, LINE_HEIGHT } from './text.js';
+import { fontSpec, lineGeometry, LINE_HEIGHT } from './text.js';
+import { angleHandlePoints, isShaped, shapePolygon, SHAPES, shapeType } from './shape.js';
 import { canListLocalFonts, fontFamilies, listLocalFonts, listLocalFontsIfGranted } from './fonts.js';
 
 const ASSET_MIME = 'application/x-nycard-asset';
@@ -207,14 +210,21 @@ const textStyle = (t) => ({
 
 function renderText(e, t) {
   Object.assign(e.style, textStyle(t));
-  const lines = layoutLines(t);
+  const lines = lineGeometry(t);
+  const lineHeight = t.size * LINE_HEIGHT;
   while (e.children.length > lines.length) e.lastChild.remove();
-  lines.forEach((line, i) => {
+  lines.forEach(({ text, cy, slope }, i) => {
     const div = e.children[i] ?? el('div', null, e);
-    div.textContent = line;
-    div.style.height = `${t.size * LINE_HEIGHT}px`;
+    div.textContent = text;
+    Object.assign(div.style, {
+      top: `${cy - lineHeight / 2}px`,
+      height: `${lineHeight}px`,
+      transform: slope ? `matrix(1, ${slope}, 0, 1, 0, 0)` : '',
+    });
   });
 }
+
+const polygonPoints = (item) => shapePolygon(item).map(([x, y]) => `${x},${y}`).join(' ');
 
 function startEditing(id) {
   editingId = id;
@@ -249,9 +259,20 @@ function buildCard(side) {
   const lines = el('div', 'snap-lines', overlayOrigin);
   const outlines = el('div', 'outlines', overlayOrigin);
   const selection = el('div', 'selection', overlayOrigin);
+  const outline = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  outline.classList.add('shape-outline');
+  const outlinePolygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+  outline.append(outlinePolygon);
+  selection.append(outline);
   for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
     el('div', `handle ${h}`, selection).dataset.handle = h;
   }
+  const angleHandles = ['angle-left', 'angle-right'].map((h) => {
+    const handle = el('div', 'handle angle', selection);
+    handle.dataset.handle = h;
+    handle.title = 'Drag to change the angle';
+    return handle;
+  });
   const marquee = el('div', 'marquee', overlayOrigin);
   const editor = el('textarea', 'text-editor', overlayOrigin);
   editor.addEventListener('input', () => updateItem(editingId, { text: editor.value }));
@@ -260,7 +281,7 @@ function buildCard(side) {
   editor.addEventListener('blur', () => document.hasFocus() && stopEditing());
   cards[side] = {
     card, picker, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, editor,
-    els: new Map(),
+    outline, outlinePolygon, angleHandles, els: new Map(),
   };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
@@ -318,6 +339,7 @@ function renderCard(side) {
     }
     if (c.items.children[index] !== e) c.items.insertBefore(e, c.items.children[index] ?? null);
     place(e, item.frame);
+    if (!isText(item)) e.style.clipPath = isShaped(item) ? `polygon(${shapePolygon(item).map(([x, y]) => `${x}px ${y}px`)})` : '';
     if (isText(item)) {
       renderText(e, item);
       e.style.visibility = item.id === editingId ? 'hidden' : '';
@@ -339,6 +361,14 @@ function renderCard(side) {
     place(c.selection, single.frame);
     c.selection.classList.toggle('cropping', !!cropping);
     c.selection.classList.toggle('text', isText(single));
+    c.selection.classList.toggle('shaped', isShaped(single));
+    c.outline.style.display = isShaped(single) ? '' : 'none';
+    c.outlinePolygon.setAttribute('points', polygonPoints(single));
+    const points = angleHandlePoints(single);
+    c.angleHandles.forEach((handle, i) => {
+      handle.hidden = !isShaped(single);
+      Object.assign(handle.style, { left: `${points[i][0]}px`, top: `${points[i][1]}px` });
+    });
   }
   const editing = items.find((i) => i.id === editingId);
   c.editor.hidden = !editing;
@@ -412,16 +442,18 @@ function startDrag(e, side, handle, onClick) {
   const { selectedIds, cropId } = getState();
   const starts = selectedItems()
     .filter((i) => i.side === side)
-    .map((i) => ({ id: i.id, frame: { ...i.frame }, image: i.image && { ...i.image }, size: i.size, handle }));
+    .map((i) => ({ ...structuredClone(i), handle }));
   const cropping = starts.length === 1 && cropId === starts[0].id;
   const textWidth = handle === 'e' || handle === 'w';
-  const mode = handle ? (cropping ? 'crop' : textWidth ? 'width' : 'resize') : cropping ? 'pan' : 'move';
+  const mode = !handle
+    ? cropping ? 'pan' : 'move'
+    : handle.startsWith('angle') ? 'angle' : cropping ? 'crop' : textWidth ? 'width' : 'resize';
   const bounds = unionRect(starts.map((st) => st.frame));
   const targets = snapTargets(side, selectedIds);
   trackPointer(e, (ev) => {
     const dx = (ev.clientX - e.clientX) / scale;
     const dy = (ev.clientY - e.clientY) / scale;
-    const snapping = !ev.altKey && mode !== 'pan';
+    const snapping = !ev.altKey && mode !== 'pan' && mode !== 'angle';
     let patches;
     let shown;
     if (mode === 'move') {
@@ -456,7 +488,7 @@ function snapTargets(side, excludeIds) {
 
 // `targets` is null when snapping is off.
 const drag = {
-  resize({ frame, image, size, handle }, dx, dy, targets) {
+  resize({ frame, image, size, shape, handle }, dx, dy, targets) {
     const sx = handle.includes('w') ? -1 : 1;
     const sy = handle.includes('n') ? -1 : 1;
     const anchor = { x: sx > 0 ? frame.x : frame.x + frame.w, y: sy > 0 ? frame.y : frame.y + frame.h };
@@ -477,7 +509,18 @@ const drag = {
       frame: frameNext,
       ...(image && { image: scaleRect(image, k, anchor) }),
       ...(size && { size: size * k }),
+      ...(shape && { shape: { ...shape, drop: shape.drop * k } }),
     };
+  },
+
+  // A drop moves an end inward, which is down on a top edge and up on a bottom edge,
+  // so these signs tilt the edge as though the dragged end moved with the pointer.
+  angle(start, dx, dy) {
+    const { type, drop } = start.shape;
+    const shown = clampDrop(start, type, drop);
+    const towardLeft = start.handle === 'angle-left' ? 1 : -1;
+    const fromTop = type === 'bottom' ? -1 : 1;
+    return { shape: { type, drop: clampDrop(start, type, shown + towardLeft * fromTop * dy) } };
   },
 
   // Text only: changes the wrap width, keeping the font size.
@@ -541,11 +584,11 @@ function buildToolbar(items) {
   }
   const [item] = items;
   const { id } = item;
-  let refresh;
+  const refreshers = [];
   if (items.length > 1) {
     el('span', 'hint', bar).textContent = `${items.length} items selected`;
   } else if (isText(item)) {
-    refresh = textControls(bar, id);
+    refreshers.push(textControls(bar, id));
   } else if (isPlaceholder(item)) {
     button(bar, 'Choose photo…', () => choosePhotoFor(id));
   } else {
@@ -555,6 +598,15 @@ function buildToolbar(items) {
     button(bar, 'Uncrop', () => updateItem(id, { frame: { ...getItem(id).image } }));
   }
   if (items.length === 1) {
+    const shape = el('select', 'shape', bar);
+    shape.title = 'Shape';
+    for (const [type, label] of Object.entries(SHAPES)) {
+      const option = el('option', null, shape);
+      option.value = type;
+      option.textContent = label;
+    }
+    shape.addEventListener('change', () => setShape(id, shape.value));
+    refreshers.push(() => (shape.value = shapeType(getItem(id))));
     button(bar, 'Forward', () => restack(id, 1));
     button(bar, 'Backward', () => restack(id, -1));
   }
@@ -562,16 +614,17 @@ function buildToolbar(items) {
   const other = sides.size === 1 && SIDES.find((side) => !sides.has(side));
   if (other) button(bar, `Move to ${other}`, () => updateItems(items.map((i) => [i.id, { side: other }])));
   button(bar, 'Delete', () => removeItems(items.map((i) => i.id)), 'danger');
-  if (items.length > 1 || !isImage(item)) return refresh;
-
-  const res = el('span', 'dpi', bar);
-  return () => {
-    const { assetId, image } = getItem(id);
-    const dpi = Math.round(getAsset(assetId).width / (image.w / DPI));
-    res.textContent = `${dpi} dpi`;
-    res.classList.toggle('low', dpi < LOW_DPI);
-    res.title = dpi < LOW_DPI ? `Below ${LOW_DPI} dpi; this image may print blurry at this size.` : 'Print resolution at this size';
-  };
+  if (items.length === 1 && isImage(item)) {
+    const res = el('span', 'dpi', bar);
+    refreshers.push(() => {
+      const { assetId, image } = getItem(id);
+      const dpi = Math.round(getAsset(assetId).width / (image.w / DPI));
+      res.textContent = `${dpi} dpi`;
+      res.classList.toggle('low', dpi < LOW_DPI);
+      res.title = dpi < LOW_DPI ? `Below ${LOW_DPI} dpi; this image may print blurry at this size.` : 'Print resolution at this size';
+    });
+  }
+  return () => refreshers.forEach((fn) => fn());
 }
 
 function textControls(bar, id) {

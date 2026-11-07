@@ -1,5 +1,6 @@
 import { getState, isPlaceholder, isText, itemsOnSide } from './store.js';
 import { drawText } from './text.js';
+import { shapePolygon } from './shape.js';
 import { getBlob } from './blobs.js';
 import { canvasSize, DPI, SIDES } from './specs.js';
 
@@ -23,7 +24,7 @@ async function renderSide(design, side) {
     const bitmap = await createImageBitmap(await getBlob(assetId));
     ctx.save();
     ctx.beginPath();
-    ctx.rect(f.x, f.y, f.w, f.h);
+    for (const [x, y] of shapePolygon(item)) ctx.lineTo(f.x + x, f.y + y);
     ctx.clip();
     ctx.drawImage(bitmap, r.x, r.y, r.w, r.h);
     ctx.restore();

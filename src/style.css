@@ -124,6 +124,9 @@ main {
 #toolbar .font {
   max-width: 180px;
 }
+#toolbar .shape {
+  margin-right: 6px;
+}
 #toolbar .size {
   width: 64px;
 }
@@ -304,6 +307,9 @@ main {
 }
 /* As flex items, lines too wide for the box overflow per the alignment, like canvas fillText in the export. */
 .item.text > div {
+  position: absolute;
+  left: 0;
+  right: 0;
   display: flex;
   justify-content: inherit;
   white-space: pre;
@@ -399,6 +405,29 @@ main {
 }
 .selection.cropping .handle {
   background: #2f7de1;
+}
+.selection.shaped {
+  outline-style: dotted;
+}
+.shape-outline {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.shape-outline polygon {
+  fill: none;
+  stroke: #2f7de1;
+  stroke-width: calc(2px / var(--scale));
+}
+.selection .handle.angle {
+  border-radius: 50%;
+  border-color: #e0249a;
+  cursor: ns-resize;
+}
+.selection.cropping .handle.angle {
+  background: #fff;
 }
 
 #tray {
