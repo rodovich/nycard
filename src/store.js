@@ -225,15 +225,15 @@ export function addText(side) {
 }
 
 export function applyLayout(side, slots) {
-  const byArea = (a, b) => b.w * b.h - a.w * a.h;
+  const byArea = ({ frame: a }, { frame: b }) => b.w * b.h - a.w * a.h;
   const items = itemsOnSide(side);
-  const photos = items.filter(isImage).sort((a, b) => byArea(a.frame, b.frame));
+  const photos = items.filter(isImage).sort(byArea);
   const texts = items.filter(isText).sort((a, b) => a.frame.y - b.frame.y);
   // Larger slots go first so smaller, inset photos stack on top.
-  const pictures = [...slots.images].sort(byArea).map((frame, i) => {
+  const pictures = [...slots.images].sort(byArea).map(({ frame, shape }, i) => {
     const photo = photos[i];
-    if (!photo) return { id: crypto.randomUUID(), kind: 'placeholder', side, frame };
-    return { ...photo, ...coverFrame(photo.assetId, frame) };
+    if (!photo) return { id: crypto.randomUUID(), kind: 'placeholder', side, frame, shape };
+    return { ...photo, ...coverFrame(photo.assetId, frame), shape };
   });
   const words = slots.texts.map(({ slot, text, ...style }, i) =>
     fitTextToSlot({ ...(texts[i] ?? { id: crypto.randomUUID(), ...newText(side), text }), ...style }, slot),

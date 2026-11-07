@@ -2,7 +2,9 @@ import { bleedRect, ptToPx, trimRect } from './specs.js';
 
 // Rects are [x, y, w, h] as fractions of the trim box. An edge at 0 or 1 runs
 // out through the bleed, so a rect touching the trim edge prints full-bleed.
-// Text slots are [x, y, w, h, pt, align, light?]; text is centered vertically in its slot.
+// Image slots are [x, y, w, h, shape?, drop?] and text slots are
+// [x, y, w, h, pt, align, light?, shape?, drop?], where `drop` is a fraction of
+// the trim height (see shape.js). Text is centered vertically in its slot.
 const DARK = '#1d1d1f';
 const LIGHT = '#ffffff';
 const HEADING = 'Happy New Year';
@@ -80,6 +82,22 @@ const PORTRAIT = [
   layout('Mosaic', [[0, 0, 0.62, 0.45], [0.62, 0, 0.38, 0.45], [0, 0.45, 0.38, 0.55], [0.38, 0.45, 0.62, 0.55]], [
     [0.42, 0.84, 0.52, 0.11, 22, 'right', true],
   ]),
+
+  layout('Slanted photo, slanted title', [[0, 0, 1, 0.7, 'bottom', 0.1]], [
+    [0.08, 0.74, 0.84, 0.12, 30, 'center', false, 'parallelogram', -0.082],
+  ]),
+  layout('Trapezoid window', [[0.1, 0.08, 0.8, 0.62, 'trapezoid', 0.05]], [
+    [0.08, 0.75, 0.84, 0.13, 30, 'center'],
+    [0.08, 0.88, 0.84, 0.07, 14, 'center'],
+  ]),
+  layout('Diagonal split', [[0, 0, 1, 0.55, 'bottom', 0.15], [0, 0.42, 1, 0.58, 'top', -0.15]], [
+    [0.06, 0.05, 0.88, 0.13, 32, 'left', true],
+  ]),
+  layout('Parallelogram stack', [
+    [0.06, 0.04, 0.88, 0.28, 'parallelogram', 0.06],
+    [0.06, 0.28, 0.88, 0.28, 'parallelogram', 0.06],
+    [0.06, 0.52, 0.88, 0.32, 'parallelogram', 0.06],
+  ], [[0.06, 0.88, 0.88, 0.09, 20, 'center']]),
 ];
 
 const LANDSCAPE = [
@@ -150,6 +168,22 @@ const LANDSCAPE = [
   layout('Mosaic', [[0, 0, 0.4, 0.6], [0.4, 0, 0.6, 0.6], [0, 0.6, 0.6, 0.4], [0.6, 0.6, 0.4, 0.4]], [
     [0.45, 0.05, 0.5, 0.16, 24, 'right', true],
   ]),
+
+  layout('Slanted band', [[0, 0.1, 1, 0.62, 'parallelogram', 0.1]], [
+    [0.06, 0.76, 0.88, 0.17, 30, 'center', false, 'parallelogram', 0.0865],
+  ]),
+  layout('Diagonal split', [[0, 0, 1, 0.6, 'bottom', 0.2], [0, 0.42, 1, 0.58, 'top', -0.2]], [
+    [0.05, 0.06, 0.6, 0.16, 30, 'left', true],
+  ]),
+  layout('Staggered parallelograms', [
+    [0.04, 0.06, 0.44, 0.76, 'parallelogram', 0.08],
+    [0.52, 0.1, 0.44, 0.76, 'parallelogram', 0.08],
+  ], [[0.04, 0.88, 0.92, 0.1, 18, 'center']]),
+  layout('Angled columns', [
+    [0.04, 0.06, 0.29, 0.72, 'parallelogram', 0.06],
+    [0.355, 0.06, 0.29, 0.72, 'parallelogram', 0.06],
+    [0.67, 0.06, 0.29, 0.72, 'parallelogram', 0.06],
+  ], [[0.04, 0.82, 0.92, 0.14, 24, 'center']]),
 ];
 
 export const LAYOUTS = { portrait: PORTRAIT, landscape: LANDSCAPE };
@@ -165,13 +199,15 @@ export function layoutSlots({ images, texts }, orientation) {
     const bottom = y + h >= 1 - EDGE ? b.y + b.h : t.y + (y + h) * t.h;
     return { x: left, y: top, w: right - left, h: bottom - top };
   };
+  const toShape = (type, drop) => (type ? { type, drop: drop * t.h } : undefined);
   return {
-    images: images.map(toCard),
-    texts: texts.map(([x, y, w, h, pt, align, light], i) => ({
+    images: images.map(([x, y, w, h, type, drop]) => ({ frame: toCard([x, y, w, h]), shape: toShape(type, drop) })),
+    texts: texts.map(([x, y, w, h, pt, align, light, type, drop], i) => ({
       slot: toCard([x, y, w, h]),
       size: ptToPx(pt),
       align,
       color: light ? LIGHT : DARK,
+      shape: toShape(type, drop),
       text: i === 0 ? HEADING : SIGNATURE,
     })),
   };

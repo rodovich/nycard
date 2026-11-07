@@ -224,6 +224,8 @@ main {
 }
 .layout-row {
   display: flex;
+  flex-wrap: wrap;
+  max-width: 280px;
   gap: 8px;
   margin-bottom: 10px;
 }

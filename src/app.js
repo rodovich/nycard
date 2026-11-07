@@ -38,7 +38,7 @@ import { PALETTE } from './palette.js';
 import { LAYOUTS, layoutSlots } from './layouts.js';
 import { downloadCard } from './export.js';
 import { fontSpec, lineGeometry, LINE_HEIGHT } from './text.js';
-import { angleHandlePoints, isShaped, shapePolygon, SHAPES, shapeType } from './shape.js';
+import { angleHandlePoints, dropForSlope, edgeSlope, isShaped, shapePolygon, SHAPES, shapeType, topAndBottomEdges } from './shape.js';
 import { canListLocalFonts, fontFamilies, listLocalFonts, listLocalFontsIfGranted } from './fonts.js';
 
 const ASSET_MIME = 'application/x-nycard-asset';
@@ -50,7 +50,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 
 const cards = {};
 let scale = 1;
-/** Feedback drawn on one side during a pointer drag: `{ side, lines?: { x, y }, marquee?: rect }`. */
+/** Feedback drawn on one side during a pointer drag: `{ side, lines?: { x, y }, edges?: [[p0, p1]], marquee?: rect }`. */
 let dragHints = null;
 /** The text item being edited in place, if any. */
 let editingId = null;
@@ -147,12 +147,19 @@ function drawThumb(parent, { images, texts }, orientation) {
   const { w, h } = trimRect(orientation);
   parent.style.aspectRatio = `${w} / ${h}`;
   const pct = ([x, y, rw, rh]) => ({ left: `${x * 100}%`, top: `${y * 100}%`, width: `${rw * 100}%`, height: `${rh * 100}%` });
-  for (const r of images) Object.assign(el('div', 'thumb-photo', parent).style, pct(r));
-  for (const [x, y, tw, th, pt, align, light] of texts) {
+  for (const [x, y, rw, rh, type, drop] of images) {
+    const photo = el('div', 'thumb-photo', parent);
+    Object.assign(photo.style, pct([x, y, rw, rh]));
+    // In the photo's own percentages; a layout's drop is a fraction of the trim height.
+    const local = { frame: { w: 100, h: 100 }, shape: type && { type, drop: (drop / rh) * 100 } };
+    if (type) photo.style.clipPath = `polygon(${shapePolygon(local).map(([px, py]) => `${px}% ${py}%`)})`;
+  }
+  for (const [x, y, tw, th, pt, align, light, type, drop] of texts) {
     const slot = el('div', 'thumb-text', parent);
     Object.assign(slot.style, pct([x, y, tw, th]), { justifyContent: JUSTIFY[align] });
     const bar = el('div', light ? 'light' : null, slot);
     bar.style.height = `${(ptToPx(pt) / h) * 100}%`;
+    if (type === 'parallelogram') bar.style.transform = `matrix(1, ${-(drop * h) / (tw * w)}, 0, 1, 0, 0)`;
   }
 }
 
@@ -387,6 +394,11 @@ function renderCard(side) {
   const card = bleedRect(s.orientation);
   for (const x of hints.lines?.x ?? []) place(el('div', null, c.lines), { ...card, x, w: 0 });
   for (const y of hints.lines?.y ?? []) place(el('div', null, c.lines), { ...card, y, h: 0 });
+  for (const [[x0, y0], [x1, y1]] of hints.edges ?? []) {
+    const line = el('div', null, c.lines);
+    place(line, { x: x0, y: y0, w: Math.hypot(x1 - x0, y1 - y0), h: 0 });
+    Object.assign(line.style, { transformOrigin: '0 0', transform: `rotate(${Math.atan2(y1 - y0, x1 - x0)}rad)` });
+  }
   c.marquee.hidden = !hints.marquee;
   if (hints.marquee) place(c.marquee, hints.marquee);
 }
@@ -450,10 +462,26 @@ function startDrag(e, side, handle, onClick) {
     : handle.startsWith('angle') ? 'angle' : cropping ? 'crop' : textWidth ? 'width' : 'resize';
   const bounds = unionRect(starts.map((st) => st.frame));
   const targets = snapTargets(side, selectedIds);
+  const edgeDrops = mode === 'angle'
+    ? itemsOnSide(side)
+      .filter((i) => !selectedIds.includes(i.id) && isShaped(i))
+      .flatMap(topAndBottomEdges)
+      .filter((edge) => edgeSlope(edge) !== 0)
+      .map((edge) => [edge, dropForSlope(starts[0], edgeSlope(edge))])
+    : [];
+  const angleSnap = snapper([0, ...edgeDrops.map(([, drop]) => drop)], SNAP_SCREEN_PX / scale);
   trackPointer(e, (ev) => {
     const dx = (ev.clientX - e.clientX) / scale;
     const dy = (ev.clientY - e.clientY) / scale;
-    const snapping = !ev.altKey && mode !== 'pan' && mode !== 'angle';
+    if (mode === 'angle') {
+      const [start] = starts;
+      const next = drag.angle(start, dx, dy, ev.altKey ? null : angleSnap);
+      const matched = angleSnap.touching([next.shape.drop]);
+      const edges = edgeDrops.filter(([, drop]) => matched.includes(drop)).map(([edge]) => edge);
+      dragHints = ev.altKey ? null : { side, edges };
+      return updateItems([[start.id, next]]);
+    }
+    const snapping = !ev.altKey && mode !== 'pan';
     let patches;
     let shown;
     if (mode === 'move') {
@@ -515,12 +543,13 @@ const drag = {
 
   // A drop moves an end inward, which is down on a top edge and up on a bottom edge,
   // so these signs tilt the edge as though the dragged end moved with the pointer.
-  angle(start, dx, dy) {
+  angle(start, dx, dy, snap) {
     const { type, drop } = start.shape;
     const shown = clampDrop(start, type, drop);
     const towardLeft = start.handle === 'angle-left' ? 1 : -1;
     const fromTop = type === 'bottom' ? -1 : 1;
-    return { shape: { type, drop: clampDrop(start, type, shown + towardLeft * fromTop * dy) } };
+    const next = shown + towardLeft * fromTop * dy;
+    return { shape: { type, drop: clampDrop(start, type, snap ? snap.snap(next) : next) } };
   },
 
   // Text only: changes the wrap width, keeping the font size.

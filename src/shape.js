@@ -51,6 +51,21 @@ export function shapePolygon(item) {
   return [[0, tl], [w, tr], [w, h - br], [0, h - bl]];
 }
 
+/** The top and bottom edges in card coordinates, each as [[x0, y0], [x1, y1]] from left to right. */
+export function topAndBottomEdges(item) {
+  const { x, y } = item.frame;
+  const [tl, tr, br, bl] = shapePolygon(item).map(([px, py]) => [x + px, y + py]);
+  return [[tl, tr], [bl, br]];
+}
+
+export const edgeSlope = ([[x0, y0], [x1, y1]]) => (y1 - y0) / (x1 - x0);
+
+/**
+ * The drop that gives the item's angle-handle edge this slope. A positive drop lowers
+ * the left end of a top edge (negative slope) and raises the left end of a bottom edge.
+ */
+export const dropForSlope = (item, slope) => (shapeType(item) === 'bottom' ? 1 : -1) * slope * item.frame.w;
+
 /** Points near each end of the slanted edge, set in from the corners so they don't cover the resize handles. */
 export function angleHandlePoints(item) {
   const [tl, tr, br, bl] = shapePolygon(item);
