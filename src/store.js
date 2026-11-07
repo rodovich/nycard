@@ -1,4 +1,4 @@
-import { putBlob, getBlob, deleteBlob } from './blobs.js';
+import { blobIds, deleteBlob, getBlob, putBlob } from './blobs.js';
 import { bleedRect, canvasSize, ptToPx, SIDES, trimRect } from './specs.js';
 import { defaultFamily } from './fonts.js';
 import { clamp, containRect, coverRect, offsetRect } from './geometry.js';
@@ -25,6 +25,9 @@ function initialState() {
     showGuides: true,
   };
 }
+
+/** State that isn't part of the design, so undo leaves it alone. */
+const VIEW_KEYS = ['selectedIds', 'cropId', 'showGuides'];
 
 let state = load();
 const listeners = new Set();
@@ -63,11 +66,61 @@ export const getState = () => state;
 export const subscribe = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 
 // Saving synchronously on every change means a reload from the dev server never loses the latest edit.
-export function update(mutate) {
-  mutate(state);
+function save() {
   localStorage.setItem(KEY, JSON.stringify(state));
   for (const fn of listeners) fn(state);
 }
+
+export function update(mutate, { undoable = true } = {}) {
+  mutate(state);
+  if (undoable) recordHistory();
+  else current = content(state);
+  save();
+}
+
+const content = (s) => JSON.stringify(s, (key, value) => (VIEW_KEYS.includes(key) ? undefined : value));
+const MERGE_MS = 500;
+const MAX_UNDO = 200;
+const undoStack = [];
+const redoStack = [];
+let current = content(state);
+let lastChangeAt = -Infinity;
+let gesture = null;
+
+function recordHistory() {
+  const next = content(state);
+  if (next === current) return;
+  const separate = gesture ? !gesture.recorded : performance.now() - lastChangeAt > MERGE_MS;
+  if (separate) {
+    undoStack.push(current);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+    redoStack.length = 0;
+    if (gesture) gesture.recorded = true;
+  }
+  current = next;
+  lastChangeAt = performance.now();
+}
+
+/** Groups every change until `endGesture` into one undo step, e.g. for a drag. */
+export const beginGesture = () => (gesture = { recorded: false });
+export const endGesture = () => {
+  gesture = null;
+  lastChangeAt = -Infinity;
+};
+
+function restore(from, to) {
+  if (!from.length) return;
+  to.push(current);
+  current = from.pop();
+  Object.assign(state, JSON.parse(current));
+  pruneSelection(state);
+  gesture = null;
+  lastChangeAt = -Infinity;
+  save();
+}
+
+export const undo = () => restore(undoStack, redoStack);
+export const redo = () => restore(redoStack, undoStack);
 
 export const assetUrl = (id) => urls.get(id);
 export const getAsset = (id) => state.assets.find((a) => a.id === id);
@@ -100,7 +153,8 @@ export function setShape(id, type) {
   updateItem(id, { shape: { type, drop: clampDrop(item, type, drop) } });
 }
 
-export const refitText = () => update((s) => s.items.filter(isText).forEach(fitText));
+/** Re-measures text without adding an undo step, since fonts can measure differently than when the design was saved. */
+export const refitText = () => update((s) => s.items.filter(isText).forEach(fitText), { undoable: false });
 
 export const updateItem = (id, patch) => updateItems([[id, patch]]);
 
@@ -154,17 +208,26 @@ export async function addFiles(files) {
   return added;
 }
 
+// The file and its URL are kept so undo can bring the asset back; deleteUnusedBlobs deletes the file on the next load.
 export function removeAsset(id) {
-  removeItems(state.items.filter((i) => i.assetId === id).map((i) => i.id));
-  update((s) => (s.assets = s.assets.filter((a) => a.id !== id)));
-  URL.revokeObjectURL(urls.get(id));
-  urls.delete(id);
-  deleteBlob(id);
+  update((s) => {
+    s.assets = s.assets.filter((a) => a.id !== id);
+    s.items = s.items.filter((i) => i.assetId !== id);
+    pruneSelection(s);
+  });
+}
+
+/** Call before the page accepts new images, which are stored before they're added to the design. */
+export async function deleteUnusedBlobs() {
+  const ids = await blobIds();
+  const used = new Set(state.assets.map((a) => a.id));
+  for (const id of ids) if (!used.has(id)) await deleteBlob(id);
 }
 
 function pruneSelection(s) {
   s.selectedIds = s.selectedIds.filter((id) => s.items.some((i) => i.id === id));
-  if (!s.selectedIds.includes(s.cropId)) s.cropId = null;
+  const cropped = s.items.find((i) => i.id === s.cropId);
+  if (!s.selectedIds.includes(s.cropId) || !cropped || !isImage(cropped)) s.cropId = null;
 }
 
 export function removeItems(ids) {

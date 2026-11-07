@@ -4,6 +4,9 @@ import {
   applyLayout,
   clampDrop,
   assetUrl,
+  beginGesture,
+  deleteUnusedBlobs,
+  endGesture,
   fillCard,
   setPhoto,
   getAsset,
@@ -17,6 +20,7 @@ import {
   loadAssetUrls,
   offsetItem,
   placeAsset,
+  redo,
   refitText,
   removeAsset,
   removeItems,
@@ -31,6 +35,7 @@ import {
   update,
   updateItem,
   updateItems,
+  undo,
 } from './store.js';
 import { bleedRect, canvasSize, DPI, ptToPx, pxToPt, safeRect, SIDES, specSummary, trimRect } from './specs.js';
 import { alignLines, clamp, growToCover, intersects, rectEdges, offsetRect, rectFromPoints, scaleRect, unionRect } from './geometry.js';
@@ -55,6 +60,8 @@ let scale = 1;
 let dragHints = null;
 /** The text item being edited in place, if any. */
 let editingId = null;
+/** The side the user last clicked, dropped onto, or used the controls of; Cmd+A selects within it. */
+let lastSide = SIDES[0];
 
 function el(tag, className, parent) {
   const e = document.createElement(tag);
@@ -249,6 +256,7 @@ function stopEditing() {
 
 function buildCard(side) {
   const figure = $(`.side[data-side="${side}"]`);
+  for (const type of ['pointerdown', 'drop']) figure.addEventListener(type, () => (lastSide = side), true);
   const card = $('.card', figure);
   const caption = $('figcaption', figure);
   imagePicker(caption, side);
@@ -407,22 +415,25 @@ function renderCard(side) {
 function trackPointer(e, onMove, onClick) {
   const target = e.target;
   target.setPointerCapture(e.pointerId);
+  beginGesture();
   let moved = false;
   const move = (ev) => {
     moved ||= Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > CLICK_SLOP_PX;
     if (moved) onMove(ev);
   };
   const end = () => {
+    endGesture();
     dragHints = null;
     if (!moved) onClick?.();
     render();
-    target.removeEventListener('pointermove', move);
-    target.removeEventListener('pointerup', end);
-    target.removeEventListener('pointercancel', end);
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
   };
-  target.addEventListener('pointermove', move);
-  target.addEventListener('pointerup', end);
-  target.addEventListener('pointercancel', end);
+  // On the window so the drag still ends if the captured element is removed mid-drag, e.g. by Delete.
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
 }
 
 function onPointerDown(e, side) {
@@ -811,7 +822,20 @@ function setupHeader() {
 
 function setupKeyboard() {
   window.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, textarea, select') || document.querySelector(':popover-open')) return;
+    if (document.querySelector(':popover-open')) return;
+    const inTextField = e.target.closest('textarea, input:not([type=checkbox])');
+    const inControl = e.target.closest('textarea, input, select');
+    const command = e.metaKey || e.ctrlKey;
+    const key = e.key.toLowerCase();
+    if (command && (key === 'z' || key === 'a')) {
+      if (inTextField) return;
+      e.preventDefault();
+      if (key === 'a') select(itemsOnSide(lastSide).map((i) => i.id));
+      else if (e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (inControl) return;
     const s = getState();
     const items = selectedItems();
     if (e.key === 'Escape') {
@@ -842,6 +866,7 @@ function fitStage() {
 }
 
 function render() {
+  if (editingId && !getItem(editingId)) editingId = null;
   fitStage();
   renderHeader();
   for (const side of SIDES) renderCard(side);
@@ -853,8 +878,8 @@ async function main() {
   await Promise.all([
     loadAssetUrls(),
     listLocalFontsIfGranted().catch((e) => console.warn('Could not list installed fonts', e)),
+    deleteUnusedBlobs().catch((e) => console.warn('Could not clean up stored images', e)),
   ]);
-  // Fonts can measure differently than when the design was saved.
   refitText();
   SIDES.forEach(buildCard);
   setupHeader();

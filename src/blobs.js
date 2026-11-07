@@ -25,3 +25,4 @@ async function run(mode, fn) {
 export const putBlob = (id, blob) => run('readwrite', (s) => s.put(blob, id));
 export const getBlob = (id) => run('readonly', (s) => s.get(id));
 export const deleteBlob = (id) => run('readwrite', (s) => s.delete(id));
+export const blobIds = () => run('readonly', (s) => s.getAllKeys());
