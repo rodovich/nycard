@@ -66,6 +66,12 @@ export const edgeSlope = ([[x0, y0], [x1, y1]]) => (y1 - y0) / (x1 - x0);
  */
 export const dropForSlope = (item, slope) => (shapeType(item) === 'bottom' ? 1 : -1) * slope * item.frame.w;
 
+/** The sign of the drop that insets the handle's own end. */
+export const angleHandleSign = (handle) => (handle === 'angle-left' ? 1 : -1);
+
+export const angleHandleShown = (item, handle) =>
+  isShaped(item) && angleHandleSign(handle) * item.shape.drop >= 0;
+
 /** Points near each end of the slanted edge, set in from the corners so they don't cover the resize handles. */
 export function angleHandlePoints(item) {
   const [tl, tr, br, bl] = shapePolygon(item);

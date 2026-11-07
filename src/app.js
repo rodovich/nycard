@@ -44,7 +44,7 @@ import { PALETTE } from './palette.js';
 import { LAYOUTS, layoutSlots } from './layouts.js';
 import { downloadCard } from './export.js';
 import { fontSpec, lineGeometry, LINE_HEIGHT } from './text.js';
-import { angleHandlePoints, dropForSlope, edgeSlope, isShaped, shapePolygon, SHAPES, shapeType, topAndBottomEdges } from './shape.js';
+import { angleHandlePoints, angleHandleShown, angleHandleSign, dropForSlope, edgeSlope, isShaped, shapePolygon, SHAPES, shapeType, topAndBottomEdges } from './shape.js';
 import { canListLocalFonts, fontFamilies, listLocalFonts, listLocalFontsIfGranted } from './fonts.js';
 
 const ASSET_MIME = 'application/x-nycard-asset';
@@ -382,7 +382,7 @@ function renderCard(side) {
     c.outlinePolygon.setAttribute('points', polygonPoints(single));
     const points = angleHandlePoints(single);
     c.angleHandles.forEach((handle, i) => {
-      handle.hidden = !isShaped(single);
+      handle.hidden = !angleHandleShown(single, handle.dataset.handle);
       Object.assign(handle.style, { left: `${points[i][0]}px`, top: `${points[i][1]}px` });
     });
   }
@@ -566,15 +566,18 @@ const drag = {
     };
   },
 
-  // A drop moves an end inward, which is down on a top edge and up on a bottom edge,
-  // so these signs tilt the edge as though the dragged end moved with the pointer.
+  // A drop moves an end inward, which is down on a top edge and up on a bottom edge, so these
+  // signs move the dragged end with the pointer. Each handle insets only its own end and stops
+  // at level; slanting the other way takes the other handle.
   angle(start, dx, dy, snap) {
     const { type, drop } = start.shape;
     const shown = clampDrop(start, type, drop);
-    const towardLeft = start.handle === 'angle-left' ? 1 : -1;
+    const sign = angleHandleSign(start.handle);
     const fromTop = type === 'bottom' ? -1 : 1;
-    const next = shown + towardLeft * fromTop * dy;
-    return { shape: { type, drop: clampDrop(start, type, snap ? snap.snap(next) : next) } };
+    const moved = shown + sign * fromTop * dy;
+    const snapped = snap ? snap.snap(moved) : moved;
+    const ownSide = sign * Math.max(0, sign * snapped);
+    return { shape: { type, drop: clampDrop(start, type, ownSide) } };
   },
 
   // The photo isn't distorted: it grows only if the frame outgrows it.
