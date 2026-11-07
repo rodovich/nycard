@@ -185,18 +185,69 @@ main {
   outline: 2px solid #2f7de1;
   outline-offset: 1px;
 }
-.palette:popover-open {
+.popover-panel {
   position: fixed;
   inset: auto;
   margin: 0;
   border: none;
-  display: grid;
-  grid-template-columns: repeat(8, 22px);
-  gap: 6px;
   padding: 10px;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+  color: #1d1d1f;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: normal;
+}
+.palette:popover-open {
+  display: grid;
+  grid-template-columns: repeat(8, 22px);
+  gap: 6px;
+}
+
+.layout-panel {
+  overflow-y: auto;
+}
+.side .layouts {
+  padding: 2px 10px;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.layout-panel h3 {
+  margin: 4px 0 6px;
+  font-size: 12px;
+  color: #6b6964;
+}
+.layout-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.layout-thumb {
+  position: relative;
+  width: 64px;
+  padding: 0;
+  background: #fff;
+  overflow: hidden;
+}
+.thumb-photo {
+  position: absolute;
+  background: #b8c4d0;
+  outline: 1px solid #fff;
+}
+.thumb-text {
+  position: absolute;
+  display: flex;
+  align-items: center;
+}
+.thumb-text > div {
+  width: 70%;
+  min-height: 2px;
+  background: #3d3b38;
+}
+.thumb-text > .light {
+  background: #fff;
 }
 
 .card {
@@ -239,6 +290,17 @@ main {
 }
 .item.text {
   overflow: visible;
+}
+.item.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: repeating-linear-gradient(45deg, #e4e7eb 0 20px, #edf0f3 20px 40px);
+  outline: calc(1px / var(--scale)) dashed #8a8780;
+  outline-offset: calc(-1px / var(--scale));
+  color: #6b6964;
+  font: calc(13px / var(--scale)) system-ui, sans-serif;
+  text-align: center;
 }
 /* As flex items, lines too wide for the box overflow per the alignment, like canvas fillText in the export. */
 .item.text > div {

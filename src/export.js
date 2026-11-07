@@ -1,4 +1,4 @@
-import { getState, isText, itemsOnSide } from './store.js';
+import { getState, isPlaceholder, isText, itemsOnSide } from './store.js';
 import { drawText } from './text.js';
 import { getBlob } from './blobs.js';
 import { canvasSize, DPI, SIDES } from './specs.js';
@@ -14,6 +14,7 @@ async function renderSide(design, side) {
   ctx.imageSmoothingQuality = 'high';
   ctx.translate(w / 2, h / 2);
   for (const item of itemsOnSide(side, design)) {
+    if (isPlaceholder(item)) continue;
     if (isText(item)) {
       drawText(ctx, item);
       continue;

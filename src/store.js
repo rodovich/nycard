@@ -53,6 +53,9 @@ export function offsetItem({ frame, image }, dx, dy) {
 }
 
 export const isText = (item) => item.kind === 'text';
+/** An empty photo slot left by a layout. It isn't exported. */
+export const isPlaceholder = (item) => item.kind === 'placeholder';
+export const isImage = (item) => !isText(item) && !isPlaceholder(item);
 
 export const getState = () => state;
 export const subscribe = (fn) => (listeners.add(fn), () => listeners.delete(fn));
@@ -145,48 +148,87 @@ export function removeAsset(id) {
   deleteBlob(id);
 }
 
+function pruneSelection(s) {
+  s.selectedIds = s.selectedIds.filter((id) => s.items.some((i) => i.id === id));
+  if (!s.selectedIds.includes(s.cropId)) s.cropId = null;
+}
+
 export function removeItems(ids) {
   update((s) => {
     s.items = s.items.filter((i) => !ids.includes(i.id));
-    s.selectedIds = s.selectedIds.filter((id) => !ids.includes(id));
-    if (ids.includes(s.cropId)) s.cropId = null;
+    pruneSelection(s);
   });
 }
 
+const coverFrame = (assetId, frame) => ({ frame, image: coverRect(getAsset(assetId), frame) });
+
 export function fillCard(id) {
-  const frame = bleedRect(state.orientation);
-  updateItem(id, { frame, image: coverRect(getAsset(getItem(id).assetId), frame) });
+  updateItem(id, coverFrame(getItem(id).assetId, bleedRect(state.orientation)));
 }
 
-export function placeAsset(assetId, side, at = { x: 0, y: 0 }) {
+/** Returns false if the placeholder is gone, e.g. filled or replaced while a photo was loading. */
+export function fillPlaceholder(id, assetId) {
+  const index = state.items.findIndex((i) => i.id === id && isPlaceholder(i));
+  if (index < 0) return false;
+  const { side, frame } = state.items[index];
+  update((s) => (s.items[index] = { id, side, assetId, ...coverFrame(assetId, frame) }));
+  select([id]);
+  return true;
+}
+
+export function placeAsset(assetId, side, at) {
   const asset = getAsset(assetId);
-  if (!itemsOnSide(side).length) {
-    const frame = bleedRect(state.orientation);
-    addItem({ assetId, side, frame, image: coverRect(asset, frame) });
-    return;
-  }
+  const placeholder = !at && itemsOnSide(side).find(isPlaceholder);
+  if (placeholder) return void fillPlaceholder(placeholder.id, assetId);
+  at ??= { x: 0, y: 0 };
+  if (!itemsOnSide(side).length) return void addItem({ assetId, side, ...coverFrame(assetId, bleedRect(state.orientation)) });
   const { w, h } = trimRect(state.orientation);
   const rect = containRect(asset, { x: at.x - w / 4, y: at.y - h / 4, w: w / 2, h: h / 2 });
   addItem({ assetId, side, frame: rect, image: { ...rect } });
 }
 
+const newText = (side) => ({
+  kind: 'text',
+  side,
+  text: 'Happy New Year',
+  font: defaultFamily(),
+  size: ptToPx(28),
+  color: '#1d1d1f',
+  align: 'center',
+  bold: false,
+  italic: false,
+});
+
+function fitTextToSlot(text, slot) {
+  text.frame = { x: slot.x, y: 0, w: slot.w, h: 0 };
+  fitText(text);
+  text.frame.y = slot.y + (slot.h - text.frame.h) / 2;
+  return text;
+}
+
 export function addText(side) {
   const { w } = trimRect(state.orientation);
-  const text = {
-    kind: 'text',
-    side,
-    text: 'Happy New Year',
-    font: defaultFamily(),
-    size: ptToPx(28),
-    color: '#1d1d1f',
-    align: 'center',
-    bold: false,
-    italic: false,
-    frame: { x: -w * 0.4, y: 0, w: w * 0.8, h: 0 },
-  };
-  fitText(text);
-  text.frame.y = -text.frame.h / 2;
-  return addItem(text);
+  return addItem(fitTextToSlot(newText(side), { x: -w * 0.4, y: 0, w: w * 0.8, h: 0 }));
+}
+
+export function applyLayout(side, slots) {
+  const byArea = (a, b) => b.w * b.h - a.w * a.h;
+  const items = itemsOnSide(side);
+  const photos = items.filter(isImage).sort((a, b) => byArea(a.frame, b.frame));
+  const texts = items.filter(isText).sort((a, b) => a.frame.y - b.frame.y);
+  // Larger slots go first so smaller, inset photos stack on top.
+  const pictures = [...slots.images].sort(byArea).map((frame, i) => {
+    const photo = photos[i];
+    if (!photo) return { id: crypto.randomUUID(), kind: 'placeholder', side, frame };
+    return { ...photo, ...coverFrame(photo.assetId, frame) };
+  });
+  const words = slots.texts.map(({ slot, text, ...style }, i) =>
+    fitTextToSlot({ ...(texts[i] ?? { id: crypto.randomUUID(), ...newText(side), text }), ...style }, slot),
+  );
+  update((s) => {
+    s.items = [...s.items.filter((i) => i.side !== side), ...pictures, ...words];
+    pruneSelection(s);
+  });
 }
 
 function addItem(item) {

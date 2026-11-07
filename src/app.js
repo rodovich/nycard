@@ -1,11 +1,15 @@
 import {
   addFiles,
   addText,
+  applyLayout,
   assetUrl,
   fillCard,
+  fillPlaceholder,
   getAsset,
   getItem,
   getState,
+  isImage,
+  isPlaceholder,
   isText,
   itemsOnSide,
   loadAssetUrls,
@@ -29,6 +33,7 @@ import { bleedRect, canvasSize, DPI, ptToPx, pxToPt, safeRect, SIDES, specSummar
 import { alignLines, clamp, intersects, offsetRect, rectFromPoints, scaleRect, unionRect } from './geometry.js';
 import { snapper } from './snap.js';
 import { PALETTE } from './palette.js';
+import { LAYOUTS, layoutSlots } from './layouts.js';
 import { downloadCard } from './export.js';
 import { fontSpec, layoutLines, LINE_HEIGHT } from './text.js';
 import { canListLocalFonts, fontFamilies, listLocalFonts, listLocalFontsIfGranted } from './fonts.js';
@@ -74,6 +79,26 @@ function cardPoint(side, ev) {
   return { x: (ev.clientX - box.left - box.width / 2) / scale, y: (ev.clientY - box.top - box.height / 2) / scale };
 }
 
+/** `onOpen` runs before the panel shows. */
+function attachPopover(trigger, panel, onOpen) {
+  panel.classList.add('popover-panel');
+  panel.popover = 'auto';
+  trigger.popoverTargetElement = panel;
+  panel.addEventListener('beforetoggle', (e) => {
+    if (e.newState !== 'open') return;
+    onOpen?.();
+    const r = trigger.getBoundingClientRect();
+    const top = r.bottom + 6;
+    Object.assign(panel.style, { left: `${r.left}px`, top: `${top}px`, maxHeight: `${window.innerHeight - top - 8}px` });
+  });
+  // Its width is only known once it's shown.
+  panel.addEventListener('toggle', (e) => {
+    if (e.newState !== 'open') return;
+    const overflow = panel.getBoundingClientRect().right - (window.innerWidth - 8);
+    if (overflow > 0) panel.style.left = `${Math.max(8, parseFloat(panel.style.left) - overflow)}px`;
+  });
+}
+
 /** Call `set` on the result to show the current color. */
 function colorPicker(parent, label, onPick) {
   const root = el('div', 'color-picker', parent);
@@ -81,13 +106,7 @@ function colorPicker(parent, label, onPick) {
   const current = button(root, '', null, 'swatch');
   current.title = label;
   const palette = el('div', 'palette', root);
-  palette.popover = 'auto';
-  current.popoverTargetElement = palette;
-  palette.addEventListener('beforetoggle', (e) => {
-    if (e.newState !== 'open') return;
-    const r = current.getBoundingClientRect();
-    Object.assign(palette.style, { left: `${r.left}px`, top: `${r.bottom + 6}px` });
-  });
+  attachPopover(current, palette);
   const swatches = PALETTE.map((color) => {
     const b = button(palette, '', () => {
       palette.hidePopover();
@@ -102,6 +121,52 @@ function colorPicker(parent, label, onPick) {
       swatches.forEach((b, i) => b.classList.toggle('chosen', PALETTE[i] === color));
     },
   };
+}
+
+function layoutPicker(parent, side) {
+  const trigger = button(parent, 'Layouts…', null, 'layouts');
+  const panel = el('div', 'layout-panel', parent);
+  attachPopover(trigger, panel, () => {
+    const { orientation } = getState();
+    panel.replaceChildren();
+    const layouts = LAYOUTS[orientation];
+    for (const count of [...new Set(layouts.map((l) => l.images.length))].sort((a, b) => a - b)) {
+      el('h3', null, panel).textContent = count === 1 ? '1 photo' : `${count} photos`;
+      const row = el('div', 'layout-row', panel);
+      for (const layout of layouts.filter((l) => l.images.length === count)) {
+        const b = button(row, '', () => {
+          panel.hidePopover();
+          applyLayout(side, layoutSlots(layout, orientation));
+        }, 'layout-thumb');
+        b.title = layout.name;
+        drawThumb(b, layout, orientation);
+      }
+    }
+  });
+}
+
+function drawThumb(parent, { images, texts }, orientation) {
+  const { w, h } = trimRect(orientation);
+  parent.style.aspectRatio = `${w} / ${h}`;
+  const pct = ([x, y, rw, rh]) => ({ left: `${x * 100}%`, top: `${y * 100}%`, width: `${rw * 100}%`, height: `${rh * 100}%` });
+  for (const r of images) Object.assign(el('div', 'thumb-photo', parent).style, pct(r));
+  for (const [x, y, tw, th, pt, align, light] of texts) {
+    const slot = el('div', 'thumb-text', parent);
+    Object.assign(slot.style, pct([x, y, tw, th]), { justifyContent: JUSTIFY[align] });
+    const bar = el('div', light ? 'light' : null, slot);
+    bar.style.height = `${(ptToPx(pt) / h) * 100}%`;
+  }
+}
+
+function choosePhotoFor(placeholderId) {
+  const input = el('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.addEventListener('change', async () => {
+    const [asset] = await addFiles(input.files);
+    if (asset) fillPlaceholder(placeholderId, asset.id);
+  });
+  input.click();
 }
 
 const JUSTIFY = { left: 'flex-start', center: 'center', right: 'flex-end' };
@@ -140,9 +205,9 @@ function stopEditing() {
 function buildCard(side) {
   const figure = $(`.side[data-side="${side}"]`);
   const card = $('.card', figure);
-  const picker = colorPicker($('figcaption', figure), 'Background', (color) =>
-    update((s) => (s.backgrounds[side] = color)),
-  );
+  const caption = $('figcaption', figure);
+  layoutPicker(caption, side);
+  const picker = colorPicker(caption, 'Background', (color) => update((s) => (s.backgrounds[side] = color)));
   const surface = el('div', 'surface', card);
   const surfaceOrigin = el('div', 'origin', surface);
   const items = el('div', 'items', surfaceOrigin);
@@ -172,7 +237,10 @@ function buildCard(side) {
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
   card.addEventListener('dblclick', (e) => {
     const item = getItem(e.target.closest('.item')?.dataset.id);
-    if (item) isText(item) ? startEditing(item.id) : toggleCrop(item.id);
+    if (!item) return;
+    if (isText(item)) startEditing(item.id);
+    else if (isPlaceholder(item)) choosePhotoFor(item.id);
+    else toggleCrop(item.id);
   });
   card.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -205,11 +273,16 @@ function renderCard(side) {
     }
   }
   items.forEach((item, index) => {
+    const kind = item.kind ?? 'image';
     let e = c.els.get(item.id);
-    if (!e) {
-      e = el('div', isText(item) ? 'item text' : 'item');
+    // Filling a placeholder keeps its id but changes its kind.
+    if (e?.dataset.kind !== kind) {
+      e?.remove();
+      e = el('div', `item ${kind}`);
       e.dataset.id = item.id;
-      if (!isText(item)) el('img', null, e).draggable = false;
+      e.dataset.kind = kind;
+      if (kind === 'image') el('img', null, e).draggable = false;
+      if (kind === 'placeholder') el('span', null, e).textContent = 'Drop a photo here or double-click';
       c.els.set(item.id, e);
     }
     if (c.items.children[index] !== e) c.items.insertBefore(e, c.items.children[index] ?? null);
@@ -217,7 +290,7 @@ function renderCard(side) {
     if (isText(item)) {
       renderText(e, item);
       e.style.visibility = item.id === editingId ? 'hidden' : '';
-    } else {
+    } else if (isImage(item)) {
       const img = e.firstChild;
       setSrc(img, assetUrl(item.assetId));
       place(img, { ...item.image, x: item.image.x - item.frame.x, y: item.image.y - item.frame.y });
@@ -369,7 +442,11 @@ const drag = {
     }
     k = Math.max(k, MIN_SIZE / Math.min(frame.w, frame.h));
     const frameNext = scaleRect(frame, k, anchor);
-    return image ? { frame: frameNext, image: scaleRect(image, k, anchor) } : { frame: frameNext, size: size * k };
+    return {
+      frame: frameNext,
+      ...(image && { image: scaleRect(image, k, anchor) }),
+      ...(size && { size: size * k }),
+    };
   },
 
   // Text only: changes the wrap width, keeping the font size.
@@ -411,7 +488,9 @@ let refreshToolbar;
 function renderToolbar() {
   const s = getState();
   const items = selectedItems();
-  const key = JSON.stringify([s.selectedIds, s.cropId, items.map((i) => i.side), !s.items.length, canListLocalFonts()]);
+  const key = JSON.stringify([
+    s.selectedIds, s.cropId, items.map((i) => [i.side, i.kind]), !s.items.length, canListLocalFonts(),
+  ]);
   if (key !== toolbarKey) {
     toolbarKey = key;
     refreshToolbar = buildToolbar(items);
@@ -426,7 +505,7 @@ function buildToolbar(items) {
   if (!items.length) {
     el('span', 'hint', bar).textContent = s.items.length
       ? 'Click to select; Shift-click or drag a box to select several. Double-click an image to crop it, or text to edit it. Hold Option (Alt) while dragging to stop snapping.'
-      : 'Add images or text from the panel on the right.';
+      : 'Add images or text from the panel on the right, or pick a layout above either side.';
     return;
   }
   const [item] = items;
@@ -436,6 +515,8 @@ function buildToolbar(items) {
     el('span', 'hint', bar).textContent = `${items.length} items selected`;
   } else if (isText(item)) {
     refresh = textControls(bar, id);
+  } else if (isPlaceholder(item)) {
+    button(bar, 'Choose photo…', () => choosePhotoFor(id));
   } else {
     const cropping = s.cropId === id;
     button(bar, cropping ? 'Done cropping' : 'Crop', () => toggleCrop(id), cropping ? 'active' : '');
@@ -450,7 +531,7 @@ function buildToolbar(items) {
   const other = sides.size === 1 && SIDES.find((side) => !sides.has(side));
   if (other) button(bar, `Move to ${other}`, () => updateItems(items.map((i) => [i.id, { side: other }])));
   button(bar, 'Delete', () => removeItems(items.map((i) => i.id)), 'danger');
-  if (items.length > 1 || isText(item)) return refresh;
+  if (items.length > 1 || !isImage(item)) return refresh;
 
   const res = el('span', 'dpi', bar);
   return () => {
@@ -543,10 +624,14 @@ async function onCardDrop(e, side) {
   e.stopPropagation();
   cards[side].card.classList.remove('drop-target');
   const at = cardPoint(side, e);
+  const target = getItem(e.target.closest('.item')?.dataset.id);
+  const put = (assetId, i) =>
+    (i === 0 && target && fillPlaceholder(target.id, assetId)) ||
+    placeAsset(assetId, side, { x: at.x + i * 60, y: at.y + i * 60 });
   const assetId = e.dataTransfer.getData(ASSET_MIME);
-  if (assetId) return placeAsset(assetId, side, at);
+  if (assetId) return put(assetId, 0);
   const added = await addFiles(e.dataTransfer.files);
-  added.forEach((a, i) => placeAsset(a.id, side, { x: at.x + i * 60, y: at.y + i * 60 }));
+  added.forEach((a, i) => put(a.id, i));
 }
 
 function sideButtons(parent, onPick) {
@@ -590,6 +675,9 @@ function setupHeader() {
   $('#guides').addEventListener('change', (e) => update((s) => (s.showGuides = e.target.checked)));
   const dl = $('#download');
   dl.addEventListener('click', async () => {
+    const empty = getState().items.filter(isPlaceholder).length;
+    const warning = `${empty === 1 ? '1 photo slot is' : `${empty} photo slots are`} still empty and won't print. Download anyway?`;
+    if (empty && !confirm(warning)) return;
     dl.disabled = true;
     try {
       await downloadCard();
