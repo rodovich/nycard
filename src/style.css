@@ -148,23 +148,37 @@ main {
   align-items: center;
   gap: 16px;
 }
-.side .background {
+.color-picker {
   display: flex;
   align-items: center;
   gap: 6px;
   font-weight: normal;
   text-transform: none;
   letter-spacing: normal;
-  cursor: pointer;
 }
-.side .background input {
-  width: 28px;
+.swatch {
+  width: 22px;
   height: 22px;
   padding: 0;
-  border: 1px solid #c8c6c1;
+  border: 1px solid rgb(0 0 0 / 0.2);
   border-radius: 4px;
-  background: none;
-  cursor: pointer;
+}
+.swatch.chosen {
+  outline: 2px solid #2f7de1;
+  outline-offset: 1px;
+}
+.palette:popover-open {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: none;
+  display: grid;
+  grid-template-columns: repeat(8, 22px);
+  gap: 6px;
+  padding: 10px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
 }
 
 .card {

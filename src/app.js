@@ -25,6 +25,7 @@ import {
 import { bleedRect, canvasSize, DPI, safeRect, SIDES, specSummary, trimRect } from './specs.js';
 import { alignLines, clamp, intersects, offsetRect, rectFromPoints, scaleRect, unionRect } from './geometry.js';
 import { snapper } from './snap.js';
+import { PALETTE } from './palette.js';
 import { downloadCard } from './export.js';
 
 const ASSET_MIME = 'application/x-nycard-asset';
@@ -49,7 +50,7 @@ function el(tag, className, parent) {
 function button(parent, label, onClick, className) {
   const b = el('button', className, parent);
   b.textContent = label;
-  b.addEventListener('click', onClick);
+  if (onClick) b.addEventListener('click', onClick);
   return b;
 }
 
@@ -66,11 +67,42 @@ function cardPoint(side, ev) {
   return { x: (ev.clientX - box.left - box.width / 2) / scale, y: (ev.clientY - box.top - box.height / 2) / scale };
 }
 
+/** Call `set` on the result to show the current color. */
+function colorPicker(parent, label, onPick) {
+  const root = el('div', 'color-picker', parent);
+  root.append(label);
+  const current = button(root, '', null, 'swatch');
+  current.title = label;
+  const palette = el('div', 'palette', root);
+  palette.popover = 'auto';
+  current.popoverTargetElement = palette;
+  palette.addEventListener('beforetoggle', (e) => {
+    if (e.newState !== 'open') return;
+    const r = current.getBoundingClientRect();
+    Object.assign(palette.style, { left: `${r.left}px`, top: `${r.bottom + 6}px` });
+  });
+  const swatches = PALETTE.map((color) => {
+    const b = button(palette, '', () => {
+      palette.hidePopover();
+      onPick(color);
+    }, 'swatch');
+    b.style.background = b.title = color;
+    return b;
+  });
+  return {
+    set(color) {
+      current.style.background = color;
+      swatches.forEach((b, i) => b.classList.toggle('chosen', PALETTE[i] === color));
+    },
+  };
+}
+
 function buildCard(side) {
   const figure = $(`.side[data-side="${side}"]`);
   const card = $('.card', figure);
-  const backgroundInput = $('.background input', figure);
-  backgroundInput.addEventListener('input', () => update((s) => (s.backgrounds[side] = backgroundInput.value)));
+  const picker = colorPicker($('figcaption', figure), 'Background', (color) =>
+    update((s) => (s.backgrounds[side] = color)),
+  );
   const surface = el('div', 'surface', card);
   const surfaceOrigin = el('div', 'origin', surface);
   const items = el('div', 'items', surfaceOrigin);
@@ -87,7 +119,7 @@ function buildCard(side) {
     el('div', `handle ${h}`, selection).dataset.handle = h;
   }
   const marquee = el('div', 'marquee', overlayOrigin);
-  cards[side] = { card, backgroundInput, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, els: new Map() };
+  cards[side] = { card, picker, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, els: new Map() };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
   card.addEventListener('dblclick', (e) => {
@@ -111,7 +143,7 @@ function renderCard(side) {
   c.card.style.setProperty('--scale', scale);
   for (const layer of [c.surface, c.overlay]) Object.assign(layer.style, { width: `${w}px`, height: `${h}px` });
   c.surface.style.background = s.backgrounds[side];
-  c.backgroundInput.value = s.backgrounds[side];
+  c.picker.set(s.backgrounds[side]);
   place(c.trim, trimRect(s.orientation));
   place(c.safe, safeRect(s.orientation));
   c.guides.hidden = !s.showGuides;
@@ -420,7 +452,7 @@ function setupHeader() {
 
 function setupKeyboard() {
   window.addEventListener('keydown', (e) => {
-    if (e.target.closest('input, textarea')) return;
+    if (e.target.closest('input, textarea') || document.querySelector(':popover-open')) return;
     const s = getState();
     const items = selectedItems();
     if (e.key === 'Escape') {
