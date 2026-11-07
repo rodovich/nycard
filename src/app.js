@@ -742,7 +742,7 @@ function photoElementAt(ev) {
 
 function showDropTarget(side, over, target) {
   const { card } = cards[side];
-  card.classList.toggle('drop-target', over);
+  card.classList.toggle('drop-target', over && !target);
   for (const i of card.querySelectorAll('.item')) i.classList.toggle('drop-target', i === target);
 }
 

@@ -265,7 +265,11 @@ main {
   outline: 3px solid #2f7de1;
   outline-offset: 4px;
 }
-.items .item.drop-target {
+.items .item.drop-target::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgb(47 125 225 / 0.3);
   outline: calc(4px / var(--scale)) solid #2f7de1;
   outline-offset: calc(-4px / var(--scale));
 }
