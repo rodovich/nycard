@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>New Year's card</title>
+    <link rel="stylesheet" href="/src/style.css" />
+    <script type="module" src="/src/app.js"></script>
+    <script type="module" src="/dev-reload.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>New Year's card</h1>
+      <div class="segmented" id="orientation">
+        <button data-orientation="portrait">Portrait</button>
+        <button data-orientation="landscape">Landscape</button>
+      </div>
+      <label class="check"><input type="checkbox" id="guides" /> Guides</label>
+      <span id="spec"></span>
+      <button id="download" class="primary">Download for Paper Culture</button>
+    </header>
+    <main>
+      <div id="workspace">
+        <div id="toolbar"></div>
+        <section id="stage">
+          <figure class="side" data-side="front">
+            <figcaption>Front</figcaption>
+            <div class="card"></div>
+          </figure>
+          <figure class="side" data-side="back">
+            <figcaption>Back</figcaption>
+            <div class="card"></div>
+          </figure>
+        </section>
+      </div>
+      <aside id="tray">
+        <label id="dropzone">
+          <input type="file" id="file-input" accept="image/*" multiple hidden />
+          <strong>Add images</strong>
+          <span>Click to browse, or drop files here or onto either side of the card.</span>
+        </label>
+        <ul id="assets"></ul>
+      </aside>
+    </main>
+  </body>
+</html>

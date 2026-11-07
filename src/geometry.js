@@ -1,0 +1,27 @@
+export const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+export const offsetRect = (r, dx, dy) => ({ ...r, x: r.x + dx, y: r.y + dy });
+
+/** Scales `r` by `k` about point `from`, then moves `from` to `to` (default: stays put). */
+export const scaleRect = (r, k, from, to = from) => ({
+  x: to.x + (r.x - from.x) * k,
+  y: to.y + (r.y - from.y) * k,
+  w: r.w * k,
+  h: r.h * k,
+});
+
+export const rectCenter = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+
+export function coverRect(size, box) {
+  return centeredIn(size, Math.max(box.w / size.width, box.h / size.height), box);
+}
+
+export function containRect(size, box) {
+  return centeredIn(size, Math.min(box.w / size.width, box.h / size.height), box);
+}
+
+function centeredIn(size, k, box) {
+  const w = size.width * k;
+  const h = size.height * k;
+  return { x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h };
+}
