@@ -5,10 +5,11 @@ import {
   clampDrop,
   assetUrl,
   fillCard,
-  fillPlaceholder,
+  setPhoto,
   getAsset,
   getItem,
   getState,
+  holdsPhoto,
   isImage,
   isPlaceholder,
   isText,
@@ -176,9 +177,9 @@ function pickImages(multiple) {
   });
 }
 
-async function choosePhotoFor(placeholderId) {
+async function choosePhotoFor(id) {
   const [asset] = await pickImages(false);
-  if (asset) fillPlaceholder(placeholderId, asset.id);
+  if (asset) setPhoto(id, asset.id);
 }
 
 function imagePicker(parent, side) {
@@ -301,9 +302,9 @@ function buildCard(side) {
   });
   card.addEventListener('dragover', (e) => {
     e.preventDefault();
-    card.classList.add('drop-target');
+    showDropTarget(side, true, photoElementAt(e));
   });
-  card.addEventListener('dragleave', () => card.classList.remove('drop-target'));
+  card.addEventListener('dragleave', () => showDropTarget(side, false));
   card.addEventListener('drop', (e) => onCardDrop(e, side));
 }
 
@@ -346,7 +347,7 @@ function renderCard(side) {
     }
     if (c.items.children[index] !== e) c.items.insertBefore(e, c.items.children[index] ?? null);
     place(e, item.frame);
-    if (!isText(item)) e.style.clipPath = isShaped(item) ? `polygon(${shapePolygon(item).map(([x, y]) => `${x}px ${y}px`)})` : '';
+    if (holdsPhoto(item)) e.style.clipPath = isShaped(item) ? `polygon(${shapePolygon(item).map(([x, y]) => `${x}px ${y}px`)})` : '';
     if (isText(item)) {
       renderText(e, item);
       e.style.visibility = item.id === editingId ? 'hidden' : '';
@@ -728,14 +729,31 @@ function renderTray() {
   }
 }
 
+/**
+ * Looks past text so a photo can be dropped onto a picture with a title over it.
+ * Holding Option (Alt) finds nothing, so the drop adds a photo instead of replacing one.
+ */
+function photoElementAt(ev) {
+  if (ev.altKey) return undefined;
+  return document
+    .elementsFromPoint(ev.clientX, ev.clientY)
+    .find((e) => e.matches('.item') && holdsPhoto(getItem(e.dataset.id)));
+}
+
+function showDropTarget(side, over, target) {
+  const { card } = cards[side];
+  card.classList.toggle('drop-target', over);
+  for (const i of card.querySelectorAll('.item')) i.classList.toggle('drop-target', i === target);
+}
+
 async function onCardDrop(e, side) {
   e.preventDefault();
   e.stopPropagation();
-  cards[side].card.classList.remove('drop-target');
+  showDropTarget(side, false);
   const at = cardPoint(side, e);
-  const target = getItem(e.target.closest('.item')?.dataset.id);
+  const targetId = photoElementAt(e)?.dataset.id;
   const put = (assetId, i) =>
-    (i === 0 && target && fillPlaceholder(target.id, assetId)) ||
+    (i === 0 && targetId && setPhoto(targetId, assetId)) ||
     placeAsset(assetId, side, { x: at.x + i * 60, y: at.y + i * 60 });
   const assetId = e.dataTransfer.getData(ASSET_MIME);
   if (assetId) return put(assetId, 0);

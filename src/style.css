@@ -265,6 +265,10 @@ main {
   outline: 3px solid #2f7de1;
   outline-offset: 4px;
 }
+.items .item.drop-target {
+  outline: calc(4px / var(--scale)) solid #2f7de1;
+  outline-offset: calc(-4px / var(--scale));
+}
 
 /* Layers are sized in print pixels and scaled to fit the screen. */
 .surface,

@@ -57,6 +57,7 @@ export const isText = (item) => item.kind === 'text';
 /** An empty photo slot left by a layout. It isn't exported. */
 export const isPlaceholder = (item) => item.kind === 'placeholder';
 export const isImage = (item) => !isText(item) && !isPlaceholder(item);
+export const holdsPhoto = (item) => !isText(item);
 
 export const getState = () => state;
 export const subscribe = (fn) => (listeners.add(fn), () => listeners.delete(fn));
@@ -179,12 +180,14 @@ export function fillCard(id) {
   updateItem(id, coverFrame(getItem(id).assetId, bleedRect(state.orientation)));
 }
 
-/** Returns false if the placeholder is gone, e.g. filled or replaced while a photo was loading. */
-export function fillPlaceholder(id, assetId) {
-  const index = state.items.findIndex((i) => i.id === id && isPlaceholder(i));
+/** Returns false if the item is gone, e.g. it was removed while a photo was loading. */
+export function setPhoto(id, assetId) {
+  const index = state.items.findIndex((i) => i.id === id && holdsPhoto(i));
   if (index < 0) return false;
-  const { side, frame, shape } = state.items[index];
-  update((s) => (s.items[index] = { id, side, shape, assetId, ...coverFrame(assetId, frame) }));
+  const { side, frame, shape, assetId: current } = state.items[index];
+  if (current !== assetId) {
+    update((s) => (s.items[index] = { id, side, shape, assetId, ...coverFrame(assetId, frame) }));
+  }
   select([id]);
   return true;
 }
@@ -192,7 +195,7 @@ export function fillPlaceholder(id, assetId) {
 export function placeAsset(assetId, side, at) {
   const asset = getAsset(assetId);
   const placeholder = !at && itemsOnSide(side).find(isPlaceholder);
-  if (placeholder) return void fillPlaceholder(placeholder.id, assetId);
+  if (placeholder) return void setPhoto(placeholder.id, assetId);
   at ??= { x: 0, y: 0 };
   if (!itemsOnSide(side).length) return void addItem({ assetId, side, ...coverFrame(assetId, bleedRect(state.orientation)) });
   const { w, h } = trimRect(state.orientation);
