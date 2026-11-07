@@ -144,6 +144,27 @@ main {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.side .background {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+.side .background input {
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #c8c6c1;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
 }
 
 .card {
@@ -168,7 +189,6 @@ main {
 }
 .surface {
   overflow: hidden;
-  background: #fff;
 }
 .overlay {
   pointer-events: none;

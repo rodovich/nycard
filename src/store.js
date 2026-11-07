@@ -1,5 +1,5 @@
 import { putBlob, getBlob, deleteBlob } from './blobs.js';
-import { bleedRect, canvasSize, trimRect } from './specs.js';
+import { bleedRect, canvasSize, SIDES, trimRect } from './specs.js';
 import { containRect, coverRect, offsetRect } from './geometry.js';
 
 const KEY = 'nycard.design.v2';
@@ -11,7 +11,15 @@ const V1_KEY = 'nycard.design.v1';
  * source image sits, so cropping is the part of `image` inside `frame`.
  */
 function initialState() {
-  return { orientation: 'portrait', assets: [], items: [], selectedIds: [], cropId: null, showGuides: true };
+  return {
+    orientation: 'portrait',
+    backgrounds: Object.fromEntries(SIDES.map((side) => [side, '#ffffff'])),
+    assets: [],
+    items: [],
+    selectedIds: [],
+    cropId: null,
+    showGuides: true,
+  };
 }
 
 let state = load();

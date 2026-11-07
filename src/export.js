@@ -8,7 +8,7 @@ async function renderSide(design, side) {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = design.backgrounds[side];
   ctx.fillRect(0, 0, w, h);
   ctx.imageSmoothingQuality = 'high';
   ctx.translate(w / 2, h / 2);

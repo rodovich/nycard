@@ -67,7 +67,10 @@ function cardPoint(side, ev) {
 }
 
 function buildCard(side) {
-  const card = $(`.side[data-side="${side}"] .card`);
+  const figure = $(`.side[data-side="${side}"]`);
+  const card = $('.card', figure);
+  const backgroundInput = $('.background input', figure);
+  backgroundInput.addEventListener('input', () => update((s) => (s.backgrounds[side] = backgroundInput.value)));
   const surface = el('div', 'surface', card);
   const surfaceOrigin = el('div', 'origin', surface);
   const items = el('div', 'items', surfaceOrigin);
@@ -84,7 +87,7 @@ function buildCard(side) {
     el('div', `handle ${h}`, selection).dataset.handle = h;
   }
   const marquee = el('div', 'marquee', overlayOrigin);
-  cards[side] = { card, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, els: new Map() };
+  cards[side] = { card, backgroundInput, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, els: new Map() };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
   card.addEventListener('dblclick', (e) => {
@@ -107,6 +110,8 @@ function renderCard(side) {
   c.card.style.height = `${h * scale}px`;
   c.card.style.setProperty('--scale', scale);
   for (const layer of [c.surface, c.overlay]) Object.assign(layer.style, { width: `${w}px`, height: `${h}px` });
+  c.surface.style.background = s.backgrounds[side];
+  c.backgroundInput.value = s.backgrounds[side];
   place(c.trim, trimRect(s.orientation));
   place(c.safe, safeRect(s.orientation));
   c.guides.hidden = !s.showGuides;
@@ -183,6 +188,7 @@ function trackPointer(e, onMove, onClick) {
 function onPointerDown(e, side) {
   if (e.button !== 0) return;
   e.preventDefault();
+  document.activeElement?.blur();
   const handle = e.target.dataset.handle;
   const hitId = e.target.closest('.item')?.dataset.id;
   if (handle) return startDrag(e, side, handle);
