@@ -158,7 +158,7 @@ function quadShape(item, type) {
   return { type, drop: clampDrop(item, type, item.shape?.drop || item.frame.w * 0.12) };
 }
 
-export const setShape = (id, type) => updateItem(id, { shape: quadShape(getItem(id), type) });
+export const setShape = (ids, type) => updateItems(ids.map((id) => [id, { shape: quadShape(getItem(id), type) }]));
 
 /** Re-measures text without adding an undo step, since fonts can measure differently than when the design was saved. */
 export const refitText = () => update((s) => s.items.filter(isText).forEach(fitText), { undoable: false });
@@ -345,15 +345,18 @@ function addItem(item) {
   return id;
 }
 
-export function restack(id, dir) {
+export function restack(ids, dir) {
   update((s) => {
-    const item = getItem(id);
-    const sameSide = itemsOnSide(item.side, s);
-    const swapWith = sameSide[sameSide.indexOf(item) + dir];
-    if (!swapWith) return;
-    const a = s.items.indexOf(item);
-    const b = s.items.indexOf(swapWith);
-    [s.items[a], s.items[b]] = [s.items[b], s.items[a]];
+    const moving = s.items.filter((i) => ids.includes(i.id));
+    if (dir > 0) moving.reverse();
+    for (const item of moving) {
+      const sameSide = itemsOnSide(item.side, s);
+      const swapWith = sameSide[sameSide.indexOf(item) + dir];
+      if (!swapWith || ids.includes(swapWith.id)) continue;
+      const a = s.items.indexOf(item);
+      const b = s.items.indexOf(swapWith);
+      [s.items[a], s.items[b]] = [s.items[b], s.items[a]];
+    }
   });
 }
 

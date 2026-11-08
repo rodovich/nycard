@@ -60,6 +60,7 @@ const MAX_PHOTO_ZOOM = 2;
 const TOOLBAR_GAP_PX = 8;
 const ROTATE_HANDLE_PX = 26;
 const ROTATE_SNAP = (2 * Math.PI) / 180;
+const MIXED_SWATCH = 'conic-gradient(#e33, #ee3, #3c3, #33e, #e33)';
 const $ = (sel, root = document) => root.querySelector(sel);
 
 const cards = {};
@@ -127,7 +128,8 @@ function pointsField(parent, title, onInput) {
   el('span', 'unit', parent).textContent = 'pt';
   return {
     set(px) {
-      if (document.activeElement !== input) input.value = Math.round(pxToPt(px) * 10) / 10;
+      if (document.activeElement === input) return;
+      input.value = px === undefined ? '' : Math.round(pxToPt(px) * 10) / 10;
     },
   };
 }
@@ -189,7 +191,7 @@ function colorPicker(parent, label, onPick) {
   });
   return {
     set(color) {
-      current.style.background = color;
+      current.style.background = color ?? MIXED_SWATCH;
       swatches.forEach((b, i) => b.classList.toggle('chosen', PALETTE[i] === color));
     },
   };
@@ -818,48 +820,66 @@ function buildToolbar(items) {
   bar.hidden = !items.length;
   hint.hidden = !!s.items.length;
   if (!items.length) return;
-  const [item] = items;
-  const { id } = item;
   const ids = items.map((i) => i.id);
   const sides = new Set(items.map((i) => i.side));
   const other = sides.size === 1 && SIDES.find((side) => !sides.has(side));
-  const moveToOther = (parent) => toolButton(parent, 'flip', `Move to ${other}`, () => updateItems(ids.map((i) => [i, { side: other }])));
-  const deleteSelected = () => iconButton(bar, 'trash', 'Delete', () => removeItems(ids), 'danger');
+  const refreshers = [];
   if (items.length > 1) {
     el('span', 'count', bar).textContent = `${items.length} items`;
     divider(bar);
-    if (other) moveToOther(bar);
-    deleteSelected();
-    return;
   }
-  const refreshers = [];
-  if (isText(item)) {
-    refreshers.push(textControls(bar, id));
-  } else if (isPlaceholder(item)) {
-    toolButton(bar, 'image', 'Choose photo…', () => choosePhotoFor(id));
-  } else if (isDrawn(item)) {
-    refreshers.push(shapeControls(bar, id));
-  } else {
-    refreshers.push(photoControls(bar, id));
+  const controls = kindControls(bar, items);
+  if (controls) {
+    refreshers.push(controls);
+    divider(bar);
   }
-  divider(bar);
-  refreshers.push(moreMenu(bar, id, moveToOther));
-  deleteSelected();
+  refreshers.push(moreMenu(bar, items, other));
+  iconButton(bar, 'trash', 'Delete', () => removeItems(ids), 'danger');
   return () => refreshers.forEach((fn) => fn());
 }
 
-function photoControls(bar, id) {
-  const cropping = getState().cropId === id;
-  toolButton(bar, 'crop', cropping ? 'Done' : 'Crop', () => toggleCrop(id), cropping ? 'active' : '');
-  toolButton(bar, 'fill', 'Fill card', () => fillCard(id));
-  toolButton(bar, 'full', 'Full photo', () => updateItem(id, { frame: { ...getItem(id).image } }));
+const updateAll = (ids, patch) => updateItems(ids.map((id) => [id, patch]));
+
+function commonValue(ids, read) {
+  const [first, ...rest] = ids.map((id) => read(getItem(id)));
+  return rest.every((v) => v === first) ? first : undefined;
+}
+
+function kindControls(bar, items) {
+  const ids = items.map((i) => i.id);
+  if (items.every(isText)) return textControls(bar, ids);
+  if (items.every(isDrawn)) return shapeControls(bar, ids);
+  if (items.every(isImage)) return photoControls(bar, ids);
+  if (items.every((i) => isText(i) || isDrawn(i))) return colorControl(bar, 'Color', ids);
+  if (items.length === 1) {
+    toolButton(bar, 'image', 'Choose photo…', () => choosePhotoFor(ids[0]));
+    return () => {};
+  }
+  return null;
+}
+
+function colorControl(bar, label, ids) {
+  const color = colorPicker(bar, label, (c) => updateAll(ids, { color: c }));
+  return () => color.set(commonValue(ids, (i) => i.color));
+}
+
+function photoControls(bar, ids) {
+  const [id] = ids;
+  const single = ids.length === 1;
+  if (single) {
+    const cropping = getState().cropId === id;
+    toolButton(bar, 'crop', cropping ? 'Done' : 'Crop', () => toggleCrop(id), cropping ? 'active' : '');
+  }
+  toolButton(bar, 'fill', 'Fill card', () => ids.forEach(fillCard));
+  toolButton(bar, 'full', 'Full photo', () => updateItems(ids.map((i) => [i, { frame: { ...getItem(i).image } }])));
   divider(bar);
-  const zoom = slider(bar, 'Zoom', { min: 1, max: MAX_PHOTO_ZOOM, step: 0.01 }, (value) => setPhotoZoom(id, value));
-  divider(bar);
-  const res = el('span', 'dpi', bar);
+  const zoom = slider(bar, 'Zoom', { min: 1, max: MAX_PHOTO_ZOOM, step: 0.01 }, (value) => ids.forEach((i) => setPhotoZoom(i, value)));
+  if (single) divider(bar);
+  const res = single && el('span', 'dpi', bar);
   return () => {
     const photo = getItem(id);
     zoom.value = photoZoom(photo);
+    if (!res) return;
     const dpi = Math.round(getAsset(photo.assetId).width / (photo.image.w / DPI));
     res.textContent = `${dpi} dpi`;
     res.classList.toggle('low', dpi < LOW_DPI);
@@ -867,32 +887,33 @@ function photoControls(bar, id) {
   };
 }
 
-function shapeControls(bar, id) {
-  const { stroked } = getItem(id);
-  if (!isLine(getItem(id))) {
-    const paintMode = (name, title, value) => iconButton(bar, name, title, () => updateItem(id, { stroked: value }), stroked === value ? 'active' : '');
+function shapeControls(bar, ids) {
+  const items = ids.map(getItem);
+  const stroked = commonValue(ids, (i) => i.stroked);
+  if (!items.some(isLine)) {
+    const paintMode = (name, title, value) => iconButton(bar, name, title, () => updateAll(ids, { stroked: value }), stroked === value ? 'active' : '');
     paintMode('solid', 'Fill', false);
     paintMode('outline', 'Stroke', true);
     divider(bar);
   }
-  const width = stroked && pointsField(bar, 'Stroke width in points', (strokeWidth) => updateItem(id, { strokeWidth }));
+  const width = stroked && pointsField(bar, 'Stroke width in points', (strokeWidth) => updateAll(ids, { strokeWidth }));
   if (stroked) divider(bar);
-  const color = colorPicker(bar, 'Color', (c) => updateItem(id, { color: c }));
+  const refreshColor = colorControl(bar, 'Color', ids);
   divider(bar);
-  const opacity = slider(bar, 'Opacity', { min: 0, max: 1, step: 0.01 }, (value) => updateItem(id, { opacity: value }));
+  const opacity = slider(bar, 'Opacity', { min: 0, max: 1, step: 0.01 }, (value) => updateAll(ids, { opacity: value }));
   return () => {
-    const item = getItem(id);
-    color.set(item.color);
-    opacity.value = item.opacity;
-    if (width) width.set(item.strokeWidth);
+    refreshColor();
+    opacity.value = getItem(ids[0]).opacity;
+    if (width) width.set(commonValue(ids, (i) => i.strokeWidth));
   };
 }
 
-function moreMenu(bar, id, moveToOther) {
+function moreMenu(bar, items, other) {
+  const ids = items.map((i) => i.id);
   const trigger = iconButton(bar, 'more', 'More');
   const menu = el('div', 'more-menu', bar);
   attachPopover(trigger, menu);
-  const hasCorners = !isCircle(getItem(id)) && !isLine(getItem(id));
+  const hasCorners = items.every((i) => !isCircle(i) && !isLine(i));
   const shape = hasCorners && el('select', null, menu);
   if (shape) {
     shape.title = 'Shape';
@@ -901,18 +922,18 @@ function moreMenu(bar, id, moveToOther) {
       option.value = type;
       option.textContent = label;
     }
-    shape.addEventListener('change', () => setShape(id, shape.value));
+    shape.addEventListener('change', () => setShape(ids, shape.value));
   }
-  toolButton(menu, 'forward', 'Bring forward', () => restack(id, 1));
-  toolButton(menu, 'backward', 'Send backward', () => restack(id, -1));
-  moveToOther(menu);
+  toolButton(menu, 'forward', 'Bring forward', () => restack(ids, 1));
+  toolButton(menu, 'backward', 'Send backward', () => restack(ids, -1));
+  if (other) toolButton(menu, 'flip', `Move to ${other}`, () => updateAll(ids, { side: other }));
   return () => {
-    if (shape) shape.value = shapeType(getItem(id));
+    if (shape) shape.value = commonValue(ids, shapeType) ?? '';
   };
 }
 
 // A menu of buttons because a native select can't show each option in its own font on macOS.
-function fontPicker(bar, id) {
+function fontPicker(bar, ids) {
   const trigger = button(bar, '', null, 'tool outlined font');
   trigger.title = 'Font';
   const name = el('span', null, trigger);
@@ -922,9 +943,9 @@ function fontPicker(bar, id) {
   attachPopover(trigger, panel, () => {
     panel.replaceChildren();
     const fonts = fontFamilies();
-    const current = getItem(id).font;
-    for (const family of fonts.includes(current) ? fonts : [current, ...fonts]) {
-      const b = button(panel, family, () => updateItem(id, { font: family }), family === current ? 'active' : '');
+    const current = commonValue(ids, (i) => i.font);
+    for (const family of !current || fonts.includes(current) ? fonts : [current, ...fonts]) {
+      const b = button(panel, family, () => updateAll(ids, { font: family }), family === current ? 'active' : '');
       b.title = family;
       preview(b, family);
     }
@@ -939,38 +960,43 @@ function fontPicker(bar, id) {
     }, 'show-all');
   });
   panel.addEventListener('toggle', (e) => {
-    if (e.newState === 'open') panel.scrollTop = $('.active', panel).offsetTop - panel.clientHeight / 2;
+    const chosen = $('.active', panel);
+    if (e.newState === 'open' && chosen) panel.scrollTop = chosen.offsetTop - panel.clientHeight / 2;
   });
   return (family) => {
-    name.textContent = family;
-    preview(name, family);
+    name.textContent = family ?? 'Multiple fonts';
+    if (family) preview(name, family);
+    else name.style.fontFamily = '';
   };
 }
 
-function textControls(bar, id) {
-  toolButton(bar, 'edit', 'Edit', () => startEditing(id));
-  divider(bar);
+function textControls(bar, ids) {
+  if (ids.length === 1) {
+    toolButton(bar, 'edit', 'Edit', () => startEditing(ids[0]));
+    divider(bar);
+  }
 
-  const setFont = fontPicker(bar, id);
-  const size = pointsField(bar, 'Font size in points', (px) => updateItem(id, { size: px }));
+  const setFont = fontPicker(bar, ids);
+  const size = pointsField(bar, 'Font size in points', (px) => updateAll(ids, { size: px }));
 
   divider(bar);
-  const color = colorPicker(bar, 'Text color', (c) => updateItem(id, { color: c }));
-  const toggle = (name, title) => iconButton(bar, name, title, () => updateItem(id, { [name]: !getItem(id)[name] }));
+  const refreshColor = colorControl(bar, 'Text color', ids);
+  const allOn = (name) => commonValue(ids, (t) => t[name]) === true;
+  const toggle = (name, title) => iconButton(bar, name, title, () => updateAll(ids, { [name]: !allOn(name) }));
   const bold = toggle('bold', 'Bold');
   const italic = toggle('italic', 'Italic');
   divider(bar);
   const ALIGNS = ['left', 'center', 'right'];
-  const aligns = ALIGNS.map((align) => iconButton(bar, align, `Align ${align}`, () => updateItem(id, { align })));
+  const aligns = ALIGNS.map((align) => iconButton(bar, align, `Align ${align}`, () => updateAll(ids, { align })));
 
   return () => {
-    const t = getItem(id);
-    setFont(t.font);
-    size.set(t.size);
-    color.set(t.color);
-    bold.classList.toggle('active', t.bold);
-    italic.classList.toggle('active', t.italic);
-    aligns.forEach((b, i) => b.classList.toggle('active', ALIGNS[i] === t.align));
+    setFont(commonValue(ids, (t) => t.font));
+    size.set(commonValue(ids, (t) => t.size));
+    refreshColor();
+    bold.classList.toggle('active', allOn('bold'));
+    italic.classList.toggle('active', allOn('italic'));
+    const align = commonValue(ids, (t) => t.align);
+    aligns.forEach((b, i) => b.classList.toggle('active', ALIGNS[i] === align));
   };
 }
 
