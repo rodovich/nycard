@@ -869,33 +869,47 @@ function moreMenu(bar, id, moveToOther) {
   };
 }
 
+// A menu of buttons because a native select can't show each option in its own font on macOS.
+function fontPicker(bar, id) {
+  const trigger = button(bar, '', null, 'tool outlined font');
+  trigger.title = 'Font';
+  const name = el('span', null, trigger);
+  trigger.append(icon('chevron'));
+  const panel = el('div', 'font-menu', bar);
+  const preview = (e, family) => (e.style.fontFamily = `"${family}"`);
+  attachPopover(trigger, panel, () => {
+    panel.replaceChildren();
+    const fonts = fontFamilies();
+    const current = getItem(id).font;
+    for (const family of fonts.includes(current) ? fonts : [current, ...fonts]) {
+      const b = button(panel, family, () => updateItem(id, { font: family }), family === current ? 'active' : '');
+      b.title = family;
+      preview(b, family);
+    }
+    if (!canListLocalFonts()) return;
+    button(panel, 'Show all installed fonts…', async () => {
+      try {
+        await listLocalFonts();
+      } catch (e) {
+        console.warn('Could not list installed fonts', e);
+      }
+      render();
+    }, 'show-all');
+  });
+  panel.addEventListener('toggle', (e) => {
+    if (e.newState === 'open') panel.scrollTop = $('.active', panel).offsetTop - panel.clientHeight / 2;
+  });
+  return (family) => {
+    name.textContent = family;
+    preview(name, family);
+  };
+}
+
 function textControls(bar, id) {
   toolButton(bar, 'edit', 'Edit', () => startEditing(id));
   divider(bar);
 
-  const font = el('select', 'font', bar);
-  const fonts = fontFamilies();
-  const current = getItem(id).font;
-  for (const family of fonts.includes(current) ? fonts : [current, ...fonts]) {
-    const option = el('option', null, font);
-    option.value = option.textContent = family;
-    option.style.fontFamily = `"${family}"`;
-  }
-  if (canListLocalFonts()) {
-    const showAll = el('option', null, font);
-    showAll.value = '';
-    showAll.textContent = 'Show all installed fonts…';
-  }
-  font.addEventListener('change', async () => {
-    if (font.value) return updateItem(id, { font: font.value });
-    try {
-      await listLocalFonts();
-    } catch (e) {
-      console.warn('Could not list installed fonts', e);
-    }
-    render();
-  });
-
+  const setFont = fontPicker(bar, id);
   const size = pointsField(bar, 'Font size in points', (px) => updateItem(id, { size: px }));
 
   divider(bar);
@@ -909,7 +923,7 @@ function textControls(bar, id) {
 
   return () => {
     const t = getItem(id);
-    font.value = t.font;
+    setFont(t.font);
     size.set(t.size);
     color.set(t.color);
     bold.classList.toggle('active', t.bold);

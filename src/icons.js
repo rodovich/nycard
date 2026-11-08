@@ -22,6 +22,7 @@ const PATHS = {
   left: '<path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/>',
   center: '<path d="M4 6h16"/><path d="M7 12h10"/><path d="M6 18h12"/>',
   right: '<path d="M4 6h16"/><path d="M10 12h10"/><path d="M7 18h13"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
   shape: '<circle cx="8.5" cy="8.5" r="5.5"/><rect x="10" y="10" width="11" height="11" rx="1"/>',
   circle: '<circle cx="12" cy="12" r="9"/>',
   line: '<path d="M4 20 20 4"/>',

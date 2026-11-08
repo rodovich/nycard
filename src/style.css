@@ -183,6 +183,38 @@ main {
 }
 #toolbar .font {
   max-width: 180px;
+  padding: 0 6px;
+}
+#toolbar .font span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.font-menu {
+  width: 260px;
+  overflow-y: auto;
+}
+/* A fixed height because some script fonts have very tall line boxes. */
+.font-menu button {
+  display: block;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  line-height: 32px;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+.font-menu button:hover {
+  background: rgb(0 0 0 / 0.06);
+}
+.font-menu button.active {
+  background: rgb(0 0 0 / 0.12);
+}
+.font-menu .show-all {
+  font-size: 13px;
 }
 #toolbar .size {
   width: 64px;
