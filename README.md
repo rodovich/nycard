@@ -2,7 +2,19 @@
 
 A single-page app for laying out a two-sided 5×7 flat card to upload to Paper Culture as your own design.
 
-Run `node dev-server.js` and open http://localhost:5173. There are no dependencies to install.
+Install Node.js 24 and Git, and use a modern web browser. There are no third-party dependencies to install and no build step.
+
+Clone the repository and start the development server:
+
+```sh
+git clone https://github.com/rodovich/nycard.git
+cd nycard
+node dev-server.js
+```
+
+If you already have the project checked out, run `node dev-server.js` from its root directory. Open http://localhost:5173 in your browser. Press Ctrl+C in the terminal to stop the server.
+
+To use a different port, run `PORT=5174 node dev-server.js` and open http://localhost:5174.
 
 Editing any file reloads the app (CSS is swapped without a reload). The design is saved in browser storage, so it survives reloads.
 
