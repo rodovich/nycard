@@ -816,13 +816,8 @@ function buildToolbar(items) {
   const hint = $('#hint');
   bar.replaceChildren();
   bar.hidden = !items.length;
-  hint.hidden = !!items.length;
-  if (!items.length) {
-    hint.textContent = s.items.length
-      ? 'Click to select; Shift-click or drag a box to select several. Double-click an image to crop it, or text to edit it. Hold Option (Alt) while dragging to stop snapping.'
-      : 'Use the buttons above each side to add photos, text, shapes, or a layout.';
-    return;
-  }
+  hint.hidden = !!s.items.length;
+  if (!items.length) return;
   const [item] = items;
   const { id } = item;
   const ids = items.map((i) => i.id);
