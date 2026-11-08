@@ -1,7 +1,7 @@
 import { blobIds, deleteBlob, getBlob, putBlob } from './blobs.js';
 import { bleedRect, canvasSize, ptToPx, SIDES, trimRect } from './specs.js';
 import { defaultFamily } from './fonts.js';
-import { clamp, containRect, coverRect, offsetRect } from './geometry.js';
+import { clamp, containRect, coverRect, growToCover, offsetRect, scaleRect } from './geometry.js';
 import { textHeight } from './text.js';
 import { imageDropLimit, slantedEdges, slantHeight } from './shape.js';
 
@@ -238,6 +238,15 @@ export function removeItems(ids) {
 }
 
 const coverFrame = (assetId, frame) => ({ frame, image: coverRect(getAsset(assetId), frame) });
+
+export const photoZoom = ({ assetId, frame, image }) => image.w / coverRect(getAsset(assetId), frame).w;
+
+export function setPhotoZoom(id, zoom) {
+  const item = getItem(id);
+  const { frame, image } = item;
+  const center = { x: frame.x + frame.w / 2, y: frame.y + frame.h / 2 };
+  updateItem(id, { image: growToCover(scaleRect(image, zoom / photoZoom(item), center), frame) });
+}
 
 export function fillCard(id) {
   updateItem(id, coverFrame(getItem(id).assetId, bleedRect(state.orientation)));

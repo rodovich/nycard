@@ -19,6 +19,7 @@ import {
   itemsOnSide,
   loadAssetUrls,
   offsetItem,
+  photoZoom,
   placeAsset,
   redo,
   refitText,
@@ -28,6 +29,7 @@ import {
   select,
   selectedItems,
   setOrientation,
+  setPhotoZoom,
   setShape,
   subscribe,
   toggleCrop,
@@ -52,6 +54,8 @@ const MIN_SIZE = 30; // print px
 const LOW_DPI = 200;
 const SNAP_SCREEN_PX = 6;
 const CLICK_SLOP_PX = 3;
+const MAX_PHOTO_ZOOM = 2;
+const ZOOM_CONTROL_GAP_PX = 6;
 const $ = (sel, root = document) => root.querySelector(sel);
 
 const cards = {};
@@ -295,9 +299,15 @@ function buildCard(side) {
   editor.addEventListener('keydown', (e) => e.key === 'Escape' && editor.blur());
   // Switching to another window also blurs the editor; editing resumes when the window regains focus.
   editor.addEventListener('blur', () => document.hasFocus() && stopEditing());
+  const zoomControl = el('div', 'zoom-control', card);
+  const zoom = el('input', null, zoomControl);
+  Object.assign(zoom, { type: 'range', min: 1, max: MAX_PHOTO_ZOOM, step: 0.01, title: 'Zoom' });
+  zoom.addEventListener('input', () => setPhotoZoom(selectedItems()[0].id, zoom.valueAsNumber));
+  // The keyboard shortcuts ignore keys pressed while an input has focus.
+  zoom.addEventListener('pointerdown', () => untilPointerEnd(() => zoom.blur()));
   cards[side] = {
     card, picker, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, editor,
-    outline, outlinePolygon, angleHandles, els: new Map(),
+    outline, outlinePolygon, angleHandles, zoomControl, zoom, els: new Map(),
   };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
@@ -386,6 +396,17 @@ function renderCard(side) {
       Object.assign(handle.style, { left: `${points[i][0]}px`, top: `${points[i][1]}px` });
     });
   }
+  const zoomable = single && isImage(single);
+  c.zoomControl.hidden = !zoomable;
+  if (zoomable) {
+    c.zoom.value = photoZoom(single);
+    const { x, y, w: frameW, h: frameH } = single.frame;
+    const controlW = c.zoomControl.offsetWidth;
+    Object.assign(c.zoomControl.style, {
+      left: `${clamp((w / 2 + x + frameW / 2) * scale - controlW / 2, 0, w * scale - controlW)}px`,
+      top: `${clamp((h / 2 + y + frameH) * scale + ZOOM_CONTROL_GAP_PX, 0, h * scale + ZOOM_CONTROL_GAP_PX)}px`,
+    });
+  }
   const editing = items.find((i) => i.id === editingId);
   c.editor.hidden = !editing;
   if (editing) {
@@ -412,32 +433,38 @@ function renderCard(side) {
   if (hints.marquee) place(c.marquee, hints.marquee);
 }
 
+function untilPointerEnd(onEnd) {
+  beginGesture();
+  const end = () => {
+    endGesture();
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    onEnd();
+  };
+  // On the window so the drag still ends if the captured element is removed mid-drag, e.g. by Delete.
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
+}
+
 function trackPointer(e, onMove, onClick) {
   const target = e.target;
   target.setPointerCapture(e.pointerId);
-  beginGesture();
   let moved = false;
   const move = (ev) => {
     moved ||= Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > CLICK_SLOP_PX;
     if (moved) onMove(ev);
   };
-  const end = () => {
-    endGesture();
+  window.addEventListener('pointermove', move);
+  untilPointerEnd(() => {
     dragHints = null;
     if (!moved) onClick?.();
     render();
     window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', end);
-    window.removeEventListener('pointercancel', end);
-  };
-  // On the window so the drag still ends if the captured element is removed mid-drag, e.g. by Delete.
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', end);
-  window.addEventListener('pointercancel', end);
+  });
 }
 
 function onPointerDown(e, side) {
-  if (e.button !== 0 || e.target === cards[side].editor) return;
+  if (e.button !== 0 || e.target === cards[side].editor || cards[side].zoomControl.contains(e.target)) return;
   e.preventDefault();
   document.activeElement?.blur();
   const handle = e.target.dataset.handle;
