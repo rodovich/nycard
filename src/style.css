@@ -46,6 +46,49 @@ button.danger {
   color: #b0322b;
 }
 
+button.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+button.tool:not(.active, .primary, .outlined) {
+  border-color: transparent;
+  background: transparent;
+}
+button.tool:not(.active, .primary, .outlined):hover {
+  background: rgb(0 0 0 / 0.06);
+}
+button.tool.icon-only {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}
+.icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: #d8d6d1;
+}
+
 header {
   display: flex;
   align-items: center;
@@ -58,9 +101,11 @@ header h1 {
   margin: 0;
   font-size: 17px;
 }
-#spec {
+#orientation {
   margin-left: auto;
-  color: #6b6964;
+}
+.spec-panel {
+  max-width: 300px;
   font-size: 12px;
 }
 
@@ -80,13 +125,6 @@ header h1 {
   margin-left: -1px;
 }
 
-.check {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-}
-
 main {
   flex: 1;
   min-height: 0;
@@ -94,25 +132,47 @@ main {
   flex-direction: column;
 }
 
-#workspace {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
 #toolbar {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 16px);
+  padding: 4px 6px;
+  overflow-x: auto;
+  white-space: nowrap;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 3px 14px rgb(0 0 0 / 0.28);
+}
+#toolbar[hidden] {
+  display: none;
+}
+#toolbar .count {
+  padding: 0 6px;
+  color: #6b6964;
+}
+#toolbar .zoom {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
-  height: 48px;
-  padding: 8px 20px;
-  overflow-x: auto;
-  white-space: nowrap;
-}
-#toolbar .hint {
   color: #6b6964;
+}
+#toolbar .zoom input {
+  width: 90px;
+  margin: 0;
+  padding: 0;
+}
+#hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: #6b6964;
+  pointer-events: none;
 }
 #toolbar :is(select, input) {
   font: inherit;
@@ -124,17 +184,17 @@ main {
 #toolbar .font {
   max-width: 180px;
 }
-#toolbar .shape {
-  margin-right: 6px;
-}
 #toolbar .size {
   width: 64px;
 }
-#toolbar .color-picker {
-  margin: 0 6px;
+.more-menu:popover-open {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
 }
 #toolbar .dpi {
-  margin-left: 8px;
+  padding: 0 4px;
   color: #6b6964;
   font-size: 12px;
 }
@@ -144,6 +204,7 @@ main {
 }
 
 #stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -174,12 +235,6 @@ main {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-}
-.side figcaption > button {
-  padding: 3px 10px;
-}
-.side .color-picker {
-  margin-left: 8px;
 }
 .color-picker {
   display: flex;
@@ -259,8 +314,7 @@ main {
 
 .card {
   position: relative;
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
-  touch-action: none;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);  touch-action: none;
   user-select: none;
 }
 .card.drop-target {
@@ -362,19 +416,6 @@ main {
 
 .ghost {
   opacity: 0.35;
-}
-
-.zoom-control {
-  position: absolute;
-  padding: 2px 8px;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
-}
-.zoom-control input {
-  display: block;
-  width: 160px;
-  margin: 0;
 }
 
 .origin {
@@ -527,10 +568,6 @@ main {
   line-height: 1;
   opacity: 0.85;
 }
-button.capitalize {
-  text-transform: capitalize;
-}
-
 .image-panel {
   width: 300px;
   overflow-y: auto;

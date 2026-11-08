@@ -48,6 +48,7 @@ import { downloadCard } from './export.js';
 import { fontSpec, lineGeometry, LINE_HEIGHT } from './text.js';
 import { angleHandlePoints, angleHandleShown, angleHandleSign, dropForSlope, edgeSlope, isShaped, shapePolygon, SHAPES, shapeType, topAndBottomEdges } from './shape.js';
 import { canListLocalFonts, fontFamilies, listLocalFonts, listLocalFontsIfGranted } from './fonts.js';
+import { icon } from './icons.js';
 
 const ASSET_MIME = 'application/x-nycard-asset';
 const MIN_SIZE = 30; // print px
@@ -55,7 +56,7 @@ const LOW_DPI = 200;
 const SNAP_SCREEN_PX = 6;
 const CLICK_SLOP_PX = 3;
 const MAX_PHOTO_ZOOM = 2;
-const ZOOM_CONTROL_GAP_PX = 6;
+const TOOLBAR_GAP_PX = 8;
 const $ = (sel, root = document) => root.querySelector(sel);
 
 const cards = {};
@@ -80,6 +81,20 @@ function button(parent, label, onClick, className) {
   if (onClick) b.addEventListener('click', onClick);
   return b;
 }
+
+function toolButton(parent, iconName, label, onClick, className = '') {
+  const b = button(parent, '', onClick, `tool ${className}`);
+  b.append(icon(iconName), label);
+  return b;
+}
+
+function iconButton(parent, iconName, title, onClick, className = '') {
+  const b = toolButton(parent, iconName, '', onClick, `icon-only ${className}`);
+  b.title = title;
+  return b;
+}
+
+const divider = (parent) => el('span', 'divider', parent);
 
 function place(e, r) {
   Object.assign(e.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
@@ -118,7 +133,6 @@ function attachPopover(trigger, panel, onOpen) {
 /** Call `set` on the result to show the current color. */
 function colorPicker(parent, label, onPick) {
   const root = el('div', 'color-picker', parent);
-  root.append(label);
   const current = button(root, '', null, 'swatch');
   current.title = label;
   const palette = el('div', 'palette', root);
@@ -137,7 +151,7 @@ function colorPicker(parent, label, onPick) {
 }
 
 function layoutPicker(parent, side) {
-  const trigger = button(parent, 'Layouts');
+  const trigger = toolButton(parent, 'layout', 'Layout');
   const panel = el('div', 'layout-panel', parent);
   attachPopover(trigger, panel, () => {
     const { orientation } = getState();
@@ -194,7 +208,7 @@ async function choosePhotoFor(id) {
 }
 
 function imagePicker(parent, side) {
-  const trigger = button(parent, 'Add image');
+  const trigger = toolButton(parent, 'image', 'Photo');
   const panel = el('div', 'image-panel', parent);
   attachPopover(trigger, panel, () => {
     panel.replaceChildren();
@@ -264,9 +278,10 @@ function buildCard(side) {
   const card = $('.card', figure);
   const caption = $('figcaption', figure);
   imagePicker(caption, side);
-  button(caption, 'Add text', () => startEditing(addText(side)));
+  toolButton(caption, 'text', 'Text', () => startEditing(addText(side)));
   layoutPicker(caption, side);
-  const picker = colorPicker(caption, 'Background', (color) => update((s) => (s.backgrounds[side] = color)));
+  divider(caption);
+  const picker = colorPicker(caption, 'Background color', (color) => update((s) => (s.backgrounds[side] = color)));
   const surface = el('div', 'surface', card);
   const surfaceOrigin = el('div', 'origin', surface);
   const items = el('div', 'items', surfaceOrigin);
@@ -299,15 +314,9 @@ function buildCard(side) {
   editor.addEventListener('keydown', (e) => e.key === 'Escape' && editor.blur());
   // Switching to another window also blurs the editor; editing resumes when the window regains focus.
   editor.addEventListener('blur', () => document.hasFocus() && stopEditing());
-  const zoomControl = el('div', 'zoom-control', card);
-  const zoom = el('input', null, zoomControl);
-  Object.assign(zoom, { type: 'range', min: 1, max: MAX_PHOTO_ZOOM, step: 0.01, title: 'Zoom' });
-  zoom.addEventListener('input', () => setPhotoZoom(selectedItems()[0].id, zoom.valueAsNumber));
-  // The keyboard shortcuts ignore keys pressed while an input has focus.
-  zoom.addEventListener('pointerdown', () => untilPointerEnd(() => zoom.blur()));
   cards[side] = {
     card, picker, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, editor,
-    outline, outlinePolygon, angleHandles, zoomControl, zoom, els: new Map(),
+    outline, outlinePolygon, angleHandles, els: new Map(),
   };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
@@ -396,17 +405,6 @@ function renderCard(side) {
       Object.assign(handle.style, { left: `${points[i][0]}px`, top: `${points[i][1]}px` });
     });
   }
-  const zoomable = single && isImage(single);
-  c.zoomControl.hidden = !zoomable;
-  if (zoomable) {
-    c.zoom.value = photoZoom(single);
-    const { x, y, w: frameW, h: frameH } = single.frame;
-    const controlW = c.zoomControl.offsetWidth;
-    Object.assign(c.zoomControl.style, {
-      left: `${clamp((w / 2 + x + frameW / 2) * scale - controlW / 2, 0, w * scale - controlW)}px`,
-      top: `${clamp((h / 2 + y + frameH) * scale + ZOOM_CONTROL_GAP_PX, 0, h * scale + ZOOM_CONTROL_GAP_PX)}px`,
-    });
-  }
   const editing = items.find((i) => i.id === editingId);
   c.editor.hidden = !editing;
   if (editing) {
@@ -452,10 +450,14 @@ function trackPointer(e, onMove, onClick) {
   let moved = false;
   const move = (ev) => {
     moved ||= Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > CLICK_SLOP_PX;
-    if (moved) onMove(ev);
+    if (moved) {
+      $('#toolbar').style.visibility = 'hidden';
+      onMove(ev);
+    }
   };
   window.addEventListener('pointermove', move);
   untilPointerEnd(() => {
+    $('#toolbar').style.visibility = '';
     dragHints = null;
     if (!moved) onClick?.();
     render();
@@ -464,7 +466,7 @@ function trackPointer(e, onMove, onClick) {
 }
 
 function onPointerDown(e, side) {
-  if (e.button !== 0 || e.target === cards[side].editor || cards[side].zoomControl.contains(e.target)) return;
+  if (e.button !== 0 || e.target === cards[side].editor) return;
   e.preventDefault();
   document.activeElement?.blur();
   const handle = e.target.dataset.handle;
@@ -639,65 +641,116 @@ function renderToolbar() {
     refreshToolbar = buildToolbar(items);
   }
   refreshToolbar?.();
+  placeToolbar(items);
+}
+
+function placeToolbar(items) {
+  if (!items.length) return;
+  const bar = $('#toolbar');
+  const stage = $('#stage').getBoundingClientRect();
+  const box = unionRect(items.map((i) => {
+    const { x, y, width: w, height: h } = cards[i.side].els.get(i.id).getBoundingClientRect();
+    return { x, y, w, h };
+  }));
+  const { offsetWidth: w, offsetHeight: h } = bar;
+  const above = box.y - TOOLBAR_GAP_PX - h;
+  const below = box.y + box.h + TOOLBAR_GAP_PX;
+  const ceiling = $('figcaption').getBoundingClientRect().bottom;
+  const preferred = above >= ceiling ? above
+    : below + h <= stage.bottom ? below
+    : box.y + TOOLBAR_GAP_PX;
+  const top = clamp(preferred, ceiling, stage.bottom - h);
+  const left = clamp(box.x + box.w / 2 - w / 2, stage.left + TOOLBAR_GAP_PX, stage.right - w - TOOLBAR_GAP_PX);
+  Object.assign(bar.style, { left: `${left - stage.left}px`, top: `${top - stage.top}px` });
 }
 
 function buildToolbar(items) {
   const s = getState();
   const bar = $('#toolbar');
+  const hint = $('#hint');
   bar.replaceChildren();
+  bar.hidden = !items.length;
+  hint.hidden = !!items.length;
   if (!items.length) {
-    el('span', 'hint', bar).textContent = s.items.length
+    hint.textContent = s.items.length
       ? 'Click to select; Shift-click or drag a box to select several. Double-click an image to crop it, or text to edit it. Hold Option (Alt) while dragging to stop snapping.'
       : 'Use the buttons above each side to add photos, text, or a layout.';
     return;
   }
   const [item] = items;
   const { id } = item;
-  const refreshers = [];
-  if (items.length > 1) {
-    el('span', 'hint', bar).textContent = `${items.length} items selected`;
-  } else if (isText(item)) {
-    refreshers.push(textControls(bar, id));
-  } else if (isPlaceholder(item)) {
-    button(bar, 'Choose photo…', () => choosePhotoFor(id));
-  } else {
-    const cropping = s.cropId === id;
-    button(bar, cropping ? 'Done cropping' : 'Crop', () => toggleCrop(id), cropping ? 'active' : '');
-    button(bar, 'Fill card', () => fillCard(id));
-    button(bar, 'Uncrop', () => updateItem(id, { frame: { ...getItem(id).image } }));
-  }
-  if (items.length === 1) {
-    const shape = el('select', 'shape', bar);
-    shape.title = 'Shape';
-    for (const [type, label] of Object.entries(SHAPES)) {
-      const option = el('option', null, shape);
-      option.value = type;
-      option.textContent = label;
-    }
-    shape.addEventListener('change', () => setShape(id, shape.value));
-    refreshers.push(() => (shape.value = shapeType(getItem(id))));
-    button(bar, 'Forward', () => restack(id, 1));
-    button(bar, 'Backward', () => restack(id, -1));
-  }
+  const ids = items.map((i) => i.id);
   const sides = new Set(items.map((i) => i.side));
   const other = sides.size === 1 && SIDES.find((side) => !sides.has(side));
-  if (other) button(bar, `Move to ${other}`, () => updateItems(items.map((i) => [i.id, { side: other }])));
-  button(bar, 'Delete', () => removeItems(items.map((i) => i.id)), 'danger');
-  if (items.length === 1 && isImage(item)) {
-    const res = el('span', 'dpi', bar);
-    refreshers.push(() => {
-      const { assetId, image } = getItem(id);
-      const dpi = Math.round(getAsset(assetId).width / (image.w / DPI));
-      res.textContent = `${dpi} dpi`;
-      res.classList.toggle('low', dpi < LOW_DPI);
-      res.title = dpi < LOW_DPI ? `Below ${LOW_DPI} dpi; this image may print blurry at this size.` : 'Print resolution at this size';
-    });
+  const moveToOther = (parent) => toolButton(parent, 'flip', `Move to ${other}`, () => updateItems(ids.map((i) => [i, { side: other }])));
+  const deleteSelected = () => iconButton(bar, 'trash', 'Delete', () => removeItems(ids), 'danger');
+  if (items.length > 1) {
+    el('span', 'count', bar).textContent = `${items.length} items`;
+    divider(bar);
+    if (other) moveToOther(bar);
+    deleteSelected();
+    return;
   }
+  const refreshers = [];
+  if (isText(item)) {
+    refreshers.push(textControls(bar, id));
+  } else if (isPlaceholder(item)) {
+    toolButton(bar, 'image', 'Choose photo…', () => choosePhotoFor(id));
+  } else {
+    refreshers.push(photoControls(bar, id));
+  }
+  divider(bar);
+  refreshers.push(moreMenu(bar, id, moveToOther));
+  deleteSelected();
   return () => refreshers.forEach((fn) => fn());
 }
 
+function photoControls(bar, id) {
+  const cropping = getState().cropId === id;
+  toolButton(bar, 'crop', cropping ? 'Done' : 'Crop', () => toggleCrop(id), cropping ? 'active' : '');
+  toolButton(bar, 'fill', 'Fill card', () => fillCard(id));
+  toolButton(bar, 'full', 'Full photo', () => updateItem(id, { frame: { ...getItem(id).image } }));
+  divider(bar);
+  const label = el('label', 'zoom', bar);
+  label.append('Zoom');
+  const zoom = el('input', null, label);
+  Object.assign(zoom, { type: 'range', min: 1, max: MAX_PHOTO_ZOOM, step: 0.01 });
+  zoom.addEventListener('input', () => setPhotoZoom(id, zoom.valueAsNumber));
+  // The keyboard shortcuts ignore keys pressed while an input has focus.
+  zoom.addEventListener('pointerdown', () => untilPointerEnd(() => zoom.blur()));
+  divider(bar);
+  const res = el('span', 'dpi', bar);
+  return () => {
+    const photo = getItem(id);
+    zoom.value = photoZoom(photo);
+    const dpi = Math.round(getAsset(photo.assetId).width / (photo.image.w / DPI));
+    res.textContent = `${dpi} dpi`;
+    res.classList.toggle('low', dpi < LOW_DPI);
+    res.title = dpi < LOW_DPI ? `Below ${LOW_DPI} dpi; this image may print blurry at this size.` : 'Print resolution at this size';
+  };
+}
+
+function moreMenu(bar, id, moveToOther) {
+  const trigger = iconButton(bar, 'more', 'More');
+  const menu = el('div', 'more-menu', bar);
+  attachPopover(trigger, menu);
+  const shape = el('select', null, menu);
+  shape.title = 'Shape';
+  for (const [type, label] of Object.entries(SHAPES)) {
+    const option = el('option', null, shape);
+    option.value = type;
+    option.textContent = label;
+  }
+  shape.addEventListener('change', () => setShape(id, shape.value));
+  toolButton(menu, 'forward', 'Bring forward', () => restack(id, 1));
+  toolButton(menu, 'backward', 'Send backward', () => restack(id, -1));
+  moveToOther(menu);
+  return () => (shape.value = shapeType(getItem(id)));
+}
+
 function textControls(bar, id) {
-  button(bar, 'Edit text', () => startEditing(id));
+  toolButton(bar, 'edit', 'Edit', () => startEditing(id));
+  divider(bar);
 
   const font = el('select', 'font', bar);
   const fonts = fontFamilies();
@@ -729,13 +782,14 @@ function textControls(bar, id) {
   size.addEventListener('input', () => size.valueAsNumber > 0 && updateItem(id, { size: ptToPx(size.valueAsNumber) }));
   el('span', 'unit', bar).textContent = 'pt';
 
-  const color = colorPicker(bar, 'Color', (c) => updateItem(id, { color: c }));
-  const toggle = (label, prop) => button(bar, label, () => updateItem(id, { [prop]: !getItem(id)[prop] }));
-  const bold = toggle('Bold', 'bold');
-  const italic = toggle('Italic', 'italic');
-  const alignGroup = el('div', 'segmented', bar);
+  divider(bar);
+  const color = colorPicker(bar, 'Text color', (c) => updateItem(id, { color: c }));
+  const toggle = (name, title) => iconButton(bar, name, title, () => updateItem(id, { [name]: !getItem(id)[name] }));
+  const bold = toggle('bold', 'Bold');
+  const italic = toggle('italic', 'Italic');
+  divider(bar);
   const ALIGNS = ['left', 'center', 'right'];
-  const aligns = ALIGNS.map((align) => button(alignGroup, align, () => updateItem(id, { align }), 'capitalize'));
+  const aligns = ALIGNS.map((align) => iconButton(bar, align, `Align ${align}`, () => updateItem(id, { align })));
 
   return () => {
     const t = getItem(id);
@@ -824,16 +878,25 @@ function renderHeader() {
   for (const b of document.querySelectorAll('#orientation button')) {
     b.classList.toggle('active', b.dataset.orientation === s.orientation);
   }
-  $('#guides').checked = s.showGuides;
-  $('#spec').textContent = specSummary(s.orientation);
+  $('#guides').classList.toggle('active', s.showGuides);
 }
 
 function setupHeader() {
+  const history = $('#history');
+  iconButton(history, 'undo', 'Undo', () => undo());
+  iconButton(history, 'redo', 'Redo', () => redo());
   for (const b of document.querySelectorAll('#orientation button')) {
+    b.prepend(icon(b.dataset.orientation));
     b.addEventListener('click', () => setOrientation(b.dataset.orientation));
   }
-  $('#guides').addEventListener('change', (e) => update((s) => (s.showGuides = e.target.checked)));
+  const guides = $('#guides');
+  guides.prepend(icon('guides'));
+  guides.addEventListener('click', () => update((s) => (s.showGuides = !s.showGuides)));
+  const specTrigger = iconButton($('#spec'), 'info', 'Print specs');
+  const specPanel = el('div', 'spec-panel', $('#spec'));
+  attachPopover(specTrigger, specPanel, () => (specPanel.textContent = specSummary(getState().orientation)));
   const dl = $('#download');
+  dl.prepend(icon('download'));
   dl.addEventListener('click', async () => {
     const empty = getState().items.filter(isPlaceholder).length;
     const warning = `${empty === 1 ? '1 photo slot is' : `${empty} photo slots are`} still empty and won't print. Download anyway?`;
@@ -853,7 +916,7 @@ function setupHeader() {
 function setupKeyboard() {
   window.addEventListener('keydown', (e) => {
     if (document.querySelector(':popover-open')) return;
-    const inTextField = e.target.closest('textarea, input:not([type=checkbox])');
+    const inTextField = e.target.closest('textarea, input');
     const inControl = e.target.closest('textarea, input, select');
     const command = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();

@@ -11,28 +11,28 @@
   <body>
     <header>
       <h1>New Year's card</h1>
+      <div class="group" id="history"></div>
       <div class="segmented" id="orientation">
-        <button data-orientation="portrait">Portrait</button>
-        <button data-orientation="landscape">Landscape</button>
+        <button class="tool outlined" data-orientation="portrait">Portrait</button>
+        <button class="tool outlined" data-orientation="landscape">Landscape</button>
       </div>
-      <label class="check"><input type="checkbox" id="guides" /> Guides</label>
-      <span id="spec"></span>
-      <button id="download" class="primary">Download for Paper Culture</button>
+      <button class="tool" id="guides">Guides</button>
+      <div id="spec"></div>
+      <button id="download" class="tool primary">Download for Paper Culture</button>
     </header>
     <main>
-      <div id="workspace">
-        <div id="toolbar"></div>
-        <section id="stage">
-          <figure class="side" data-side="front">
-            <figcaption><span class="side-label">Front</span></figcaption>
-            <div class="card"></div>
-          </figure>
-          <figure class="side" data-side="back">
-            <figcaption><span class="side-label">Back</span></figcaption>
-            <div class="card"></div>
-          </figure>
-        </section>
-      </div>
+      <section id="stage">
+        <figure class="side" data-side="front">
+          <figcaption><span class="side-label">Front</span></figcaption>
+          <div class="card"></div>
+        </figure>
+        <figure class="side" data-side="back">
+          <figcaption><span class="side-label">Back</span></figcaption>
+          <div class="card"></div>
+        </figure>
+        <div id="toolbar" hidden></div>
+        <div id="hint"></div>
+      </section>
       <aside id="tray">
         <button id="dropzone">
           <strong>Upload photos</strong>
