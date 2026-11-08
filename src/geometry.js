@@ -23,6 +23,27 @@ export function growToCover(r, box) {
   };
 }
 
+export const rectCenter = (r) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+
+export function normalizeAngle(angle) {
+  const wrapped = Math.atan2(Math.sin(angle), Math.cos(angle));
+  return Math.abs(wrapped) < 1e-9 ? 0 : wrapped;
+}
+
+export const rotateVector = (x, y, angle) => [
+  x * Math.cos(angle) - y * Math.sin(angle),
+  x * Math.sin(angle) + y * Math.cos(angle),
+];
+
+/** The upright rectangle enclosing `r` after it turns by `angle` about its center. */
+export function rotatedBounds(r, angle) {
+  const cos = Math.abs(Math.cos(angle));
+  const sin = Math.abs(Math.sin(angle));
+  const w = r.w * cos + r.h * sin;
+  const h = r.w * sin + r.h * cos;
+  return { x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h };
+}
+
 export const rectEdges = (r) => ({ left: r.x, top: r.y, right: r.x + r.w, bottom: r.y + r.h });
 
 export function unionRect(rects) {

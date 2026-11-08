@@ -527,6 +527,11 @@ main {
 .selection.circle .handle:is(.n, .s, .e, .w) {
   display: none;
 }
+.selection .handle.rotate {
+  left: 50%;
+  border-radius: 50%;
+  cursor: grab;
+}
 .selection.line {
   outline: none;
 }

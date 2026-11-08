@@ -1,3 +1,9 @@
+import { normalizeAngle } from './geometry.js';
+
+/** The closest of `targets` within `tolerance` of `angle`, or `angle` if there is none. All in radians. */
+export const snapAngle = (angle, targets, tolerance) =>
+  snapper(targets.map((t) => angle + normalizeAngle(t - angle)), tolerance).snap(angle);
+
 /** Snaps positions on one axis to the nearest of `lines` within `threshold`. */
 export function snapper(lines, threshold) {
   // The shift that puts the closest of `values` on a line, or 0 if none is within the threshold.

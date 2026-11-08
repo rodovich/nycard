@@ -1,9 +1,9 @@
 import { blobIds, deleteBlob, getBlob, putBlob } from './blobs.js';
 import { bleedRect, canvasSize, ptToPx, SIDES, trimRect } from './specs.js';
 import { defaultFamily } from './fonts.js';
-import { clamp, containRect, coverRect, growToCover, offsetRect, scaleRect } from './geometry.js';
+import { clamp, containRect, coverRect, growToCover, offsetRect, rotateVector, scaleRect } from './geometry.js';
 import { textHeight } from './text.js';
-import { imageDropLimit, isDrawn, slantedEdges, slantHeight } from './shape.js';
+import { imageDropLimit, isDrawn, itemRotation, slantedEdges, slantHeight } from './shape.js';
 
 const KEY = 'nycard.design.v2';
 const V1_KEY = 'nycard.design.v1';
@@ -141,7 +141,12 @@ export function updateItems(patches) {
   });
 }
 
-const fitText = (item) => (item.frame = { ...item.frame, h: textHeight(item) + slantHeight(item) });
+function fitText(item) {
+  const h = textHeight(item) + slantHeight(item);
+  const grown = (h - item.frame.h) / 2;
+  const [rx, ry] = rotateVector(0, grown, itemRotation(item));
+  item.frame = { ...item.frame, x: item.frame.x + rx, y: item.frame.y + ry - grown, h };
+}
 
 export function clampDrop(item, type, drop) {
   const limit = isText(item) ? (4 * textHeight(item)) / slantedEdges(type) : imageDropLimit(item, type);
@@ -251,16 +256,16 @@ export function setPhotoZoom(id, zoom) {
 }
 
 export function fillCard(id) {
-  updateItem(id, coverFrame(getItem(id).assetId, bleedRect(state.orientation)));
+  updateItem(id, { ...coverFrame(getItem(id).assetId, bleedRect(state.orientation)), rotation: undefined });
 }
 
 /** Returns false if the item is gone, e.g. it was removed while a photo was loading. */
 export function setPhoto(id, assetId) {
   const index = state.items.findIndex((i) => i.id === id && holdsPhoto(i));
   if (index < 0) return false;
-  const { side, frame, shape, assetId: current } = state.items[index];
+  const { side, frame, shape, rotation, assetId: current } = state.items[index];
   if (current !== assetId) {
-    update((s) => (s.items[index] = { id, side, shape, assetId, ...coverFrame(assetId, frame) }));
+    update((s) => (s.items[index] = { id, side, shape, rotation, assetId, ...coverFrame(assetId, frame) }));
   }
   select([id]);
   return true;
@@ -322,10 +327,10 @@ export function applyLayout(side, slots) {
   const pictures = [...slots.images].sort(byArea).map(({ frame, shape }, i) => {
     const photo = photos[i];
     if (!photo) return { id: crypto.randomUUID(), kind: 'placeholder', side, frame, shape };
-    return { ...photo, ...coverFrame(photo.assetId, frame), shape };
+    return { ...photo, ...coverFrame(photo.assetId, frame), shape, rotation: undefined };
   });
   const words = slots.texts.map(({ slot, text, ...style }, i) =>
-    fitTextToSlot({ ...(texts[i] ?? { id: crypto.randomUUID(), ...newText(side), text }), ...style }, slot),
+    fitTextToSlot({ ...(texts[i] ?? { id: crypto.randomUUID(), ...newText(side), text }), ...style, rotation: undefined }, slot),
   );
   update((s) => {
     s.items = [...s.items.filter((i) => i.side !== side), ...pictures, ...items.filter(isDrawn), ...words];

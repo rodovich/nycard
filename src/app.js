@@ -41,13 +41,13 @@ import {
   undo,
 } from './store.js';
 import { bleedRect, canvasSize, DPI, ptToPx, pxToPt, safeRect, SIDES, specSummary, trimRect } from './specs.js';
-import { alignLines, clamp, growToCover, intersects, rectEdges, offsetRect, rectFromPoints, scaleRect, unionRect } from './geometry.js';
-import { snapper } from './snap.js';
+import { alignLines, clamp, growToCover, intersects, normalizeAngle, rectCenter, rectEdges, offsetRect, rectFromPoints, rotateVector, scaleRect, unionRect } from './geometry.js';
+import { snapAngle, snapper } from './snap.js';
 import { PALETTE } from './palette.js';
 import { LAYOUTS, layoutSlots } from './layouts.js';
 import { downloadCard } from './export.js';
 import { fontSpec, lineGeometry, LINE_HEIGHT } from './text.js';
-import { angledEdges, angleHandlePoints, angleHandleShown, angleHandleSign, drawnPath, dropForSlope, edgeAngle, edgeSlope, isCircle, isDrawn, isLine, isParallel, isShaped, lineEnds, lineFromEnds, lineLocalEnds, nearestAngle, shapePolygon, SHAPES, shapeType } from './shape.js';
+import { angledEdges, angleHandlePoints, angleHandleShown, angleHandleSign, drawnPath, dropForSlope, canRotate, edgeAngle, isCircle, isDrawn, isLine, isParallel, isShaped, itemBounds, itemRotation, lineEnds, lineFromEnds, lineLocalEnds, nearestAngle, ownEdgeAngles, rotationTargets, shapePolygon, SHAPES, shapeType } from './shape.js';
 import { canListLocalFonts, fontFamilies, listLocalFonts, listLocalFontsIfGranted } from './fonts.js';
 import { icon } from './icons.js';
 
@@ -58,6 +58,8 @@ const SNAP_SCREEN_PX = 6;
 const CLICK_SLOP_PX = 3;
 const MAX_PHOTO_ZOOM = 2;
 const TOOLBAR_GAP_PX = 8;
+const ROTATE_HANDLE_PX = 26;
+const ROTATE_SNAP = (2 * Math.PI) / 180;
 const $ = (sel, root = document) => root.querySelector(sel);
 
 const cards = {};
@@ -133,6 +135,15 @@ function pointsField(parent, title, onInput) {
 function place(e, r) {
   Object.assign(e.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
 }
+
+const rotationTransform = (item) => (item.rotation ? `rotate(${item.rotation}rad)` : '');
+
+function placeItem(e, item) {
+  place(e, item.frame);
+  e.style.transform = rotationTransform(item);
+}
+
+const showsRotateHandle = (item) => canRotate(item) && getState().cropId !== item.id;
 
 function setSrc(img, url) {
   if (img.getAttribute('src') !== url) img.src = url;
@@ -362,6 +373,9 @@ function buildCard(side) {
     handle.title = 'Drag to change the angle';
     return handle;
   });
+  const rotateHandle = el('div', 'handle rotate', selection);
+  rotateHandle.dataset.handle = 'rotate';
+  rotateHandle.title = 'Drag to rotate';
   const lineHandles = ['line-start', 'line-end'].map((h) => {
     const handle = el('div', 'handle end', selection);
     handle.dataset.handle = h;
@@ -375,7 +389,7 @@ function buildCard(side) {
   editor.addEventListener('blur', () => document.hasFocus() && stopEditing());
   cards[side] = {
     card, picker, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, editor,
-    outline, outlinePolygon, angleHandles, lineHandles, els: new Map(),
+    outline, outlinePolygon, angleHandles, rotateHandle, lineHandles, els: new Map(),
   };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
@@ -437,7 +451,7 @@ function renderCard(side) {
       c.els.set(item.id, e);
     }
     if (c.items.children[index] !== e) c.items.insertBefore(e, c.items.children[index] ?? null);
-    place(e, item.frame);
+    placeItem(e, item);
     if (holdsPhoto(item)) e.style.clipPath = isShaped(item) ? `polygon(${shapePolygon(item).map(([x, y]) => `${x}px ${y}px`)})` : '';
     if (isText(item)) {
       renderText(e, item);
@@ -454,12 +468,14 @@ function renderCard(side) {
   const selected = selectedItems().filter((i) => i.side === side);
   const single = s.selectedIds.length === 1 ? selected[0] : undefined;
   c.outlines.replaceChildren();
-  if (!single) for (const i of selected) place(el('div', null, c.outlines), i.frame);
+  if (!single) for (const i of selected) placeItem(el('div', null, c.outlines), i);
   c.selection.hidden = !single;
   const cropping = single && single.id === s.cropId;
   c.ghost.hidden = !cropping;
   if (single) {
-    place(c.selection, single.frame);
+    placeItem(c.selection, single);
+    c.rotateHandle.hidden = !showsRotateHandle(single);
+    c.rotateHandle.style.top = `${-ROTATE_HANDLE_PX / scale}px`;
     c.selection.classList.toggle('cropping', !!cropping);
     c.selection.classList.toggle('text', isText(single));
     c.selection.classList.toggle('shaped', isShaped(single));
@@ -479,13 +495,18 @@ function renderCard(side) {
   const editing = items.find((i) => i.id === editingId);
   c.editor.hidden = !editing;
   if (editing) {
-    place(c.editor, editing.frame);
+    placeItem(c.editor, editing);
     Object.assign(c.editor.style, textStyle(editing));
     if (c.editor.value !== editing.text) c.editor.value = editing.text;
   }
   if (cropping) {
     setSrc(c.ghost, assetUrl(single.assetId));
     place(c.ghost, single.image);
+    const center = rectCenter(single.frame);
+    Object.assign(c.ghost.style, {
+      transform: rotationTransform(single),
+      transformOrigin: `${center.x - single.image.x}px ${center.y - single.image.y}px`,
+    });
   }
 
   const hints = dragHints?.side === side ? dragHints : {};
@@ -556,7 +577,7 @@ function startMarquee(e, side) {
   select(base);
   trackPointer(e, (ev) => {
     const marquee = rectFromPoints(from, cardPoint(side, ev));
-    const hits = itemsOnSide(side).filter((i) => intersects(i.frame, marquee));
+    const hits = itemsOnSide(side).filter((i) => intersects(itemBounds(i), marquee));
     dragHints = { side, marquee };
     select(new Set([...base, ...hits.map((i) => i.id)]));
   });
@@ -571,23 +592,38 @@ function startDrag(e, side, handle, onClick) {
   const edge = handle?.length === 1;
   const mode = !handle
     ? cropping ? 'pan' : 'move'
-    : handle.startsWith('angle') ? 'angle' : handle.startsWith('line') ? 'line' : cropping ? 'crop' : edge ? 'stretch' : 'resize';
-  const bounds = unionRect(starts.map((st) => st.frame));
+    : handle === 'rotate' ? 'rotate' : handle.startsWith('angle') ? 'angle' : handle.startsWith('line') ? 'line' : cropping ? 'crop' : edge ? 'stretch' : 'resize';
+  const bounds = unionRect(starts.map(itemBounds));
   const targets = snapTargets(side, selectedIds);
   const otherEdges = itemsOnSide(side).filter((i) => !selectedIds.includes(i.id)).flatMap(angledEdges);
-  const lineAngles = [0, Math.PI / 2, ...otherEdges.map(edgeAngle)];
+  const otherAngles = otherEdges.map(edgeAngle);
+  const lineAngles = [0, Math.PI / 2, ...otherAngles];
+  const turnTargets = rotationTargets(starts[0], otherAngles);
+  const ownAngles = ownEdgeAngles(starts[0]);
   const edgeDrops = mode === 'angle'
     ? otherEdges
-      .filter((edge) => edgeSlope(edge) !== 0)
-      .map((edge) => [edge, dropForSlope(starts[0], edgeSlope(edge))])
+      .map((edge) => [edge, dropForSlope(starts[0], Math.tan(edgeAngle(edge) - itemRotation(starts[0])))])
+      .filter(([, drop]) => drop !== 0)
     : [];
   const angleSnap = snapper([0, ...edgeDrops.map(([, drop]) => drop)], SNAP_SCREEN_PX / scale);
   trackPointer(e, (ev) => {
     const dx = (ev.clientX - e.clientX) / scale;
     const dy = (ev.clientY - e.clientY) / scale;
+    const rotation = itemRotation(starts[0]);
+    const [localDx, localDy] = rotateVector(dx, dy, -rotation);
+    if (mode === 'rotate') {
+      const [start] = starts;
+      const { x: cx, y: cy } = rectCenter(start.frame);
+      const pointerAngle = (p) => Math.atan2(p.y - cy, p.x - cx);
+      const free = rotation + pointerAngle(cardPoint(side, ev)) - pointerAngle(cardPoint(side, e));
+      const angle = ev.altKey ? free : snapAngle(free, turnTargets, ROTATE_SNAP);
+      const edges = angle === free ? [] : otherEdges.filter((edge) => ownAngles.some((o) => isParallel(2 * edgeAngle(edge), 2 * (angle + o))));
+      dragHints = { side, edges };
+      return updateItem(start.id, { rotation: normalizeAngle(angle) });
+    }
     if (mode === 'angle') {
       const [start] = starts;
-      const next = drag.angle(start, dx, dy, ev.altKey ? null : angleSnap);
+      const next = drag.angle(start, localDx, localDy, ev.altKey ? null : angleSnap);
       const matched = angleSnap.touching([next.shape.drop]);
       const edges = edgeDrops.filter(([, drop]) => matched.includes(drop)).map(([edge]) => edge);
       dragHints = ev.altKey ? null : { side, edges };
@@ -601,7 +637,8 @@ function startDrag(e, side, handle, onClick) {
       dragHints = ev.altKey ? null : { side, edges, lines: { x: targets.x.touching([end[0]]), y: targets.y.touching([end[1]]) } };
       return updateItems([[start.id, lineFromEnds(fixed, end)]]);
     }
-    const snapping = !ev.altKey && mode !== 'pan';
+    // Alignment guides are upright, so a turned item's own edges can only snap to them when moving.
+    const snapping = !ev.altKey && mode !== 'pan' && (mode === 'move' || !rotation);
     let patches;
     let shown;
     if (mode === 'move') {
@@ -615,7 +652,7 @@ function startDrag(e, side, handle, onClick) {
       patches = starts.map((st) => [st.id, offsetItem(st, mx, my)]);
       shown = offsetRect(bounds, mx, my);
     } else {
-      const next = drag[mode](starts[0], dx, dy, snapping ? targets : null);
+      const next = holdInPlace(starts[0], drag[mode](starts[0], localDx, localDy, snapping ? targets : null));
       patches = [[starts[0].id, next]];
       shown = next.frame;
     }
@@ -624,6 +661,15 @@ function startDrag(e, side, handle, onClick) {
       : null;
     updateItems(patches);
   }, onClick);
+}
+
+/** Rotation pivots on the frame's center, so changing the frame of a turned item must also shift it to keep the undragged sides still. */
+function holdInPlace(start, patch) {
+  const before = rectCenter(start.frame);
+  const after = rectCenter(patch.frame);
+  const [dx, dy] = [after.x - before.x, after.y - before.y];
+  const [rx, ry] = rotateVector(dx, dy, itemRotation(start));
+  return { ...patch, ...offsetItem(patch, rx - dx, ry - dy) };
 }
 
 /** `targets` is null when snapping is off. The result has an `angle` if the line snapped to one of `angles`. */
@@ -649,7 +695,7 @@ function moveLineEnd(start, dx, dy, targets, angles) {
 function snapTargets(side, excludeIds) {
   const { orientation } = getState();
   const others = itemsOnSide(side).filter((i) => !excludeIds.includes(i.id));
-  const rects = [bleedRect(orientation), trimRect(orientation), safeRect(orientation), ...others.map((i) => i.frame)];
+  const rects = [bleedRect(orientation), trimRect(orientation), safeRect(orientation), ...others.map(itemBounds)];
   const axis = (a) => snapper(rects.flatMap((r) => alignLines(r, a)), SNAP_SCREEN_PX / scale);
   return { x: axis('x'), y: axis('y') };
 }
@@ -752,7 +798,8 @@ function placeToolbar(items) {
     return { x, y, w, h };
   }));
   const { offsetWidth: w, offsetHeight: h } = bar;
-  const above = box.y - TOOLBAR_GAP_PX - h;
+  const gap = TOOLBAR_GAP_PX + (items.length === 1 && showsRotateHandle(items[0]) ? ROTATE_HANDLE_PX : 0);
+  const above = box.y - gap - h;
   const below = box.y + box.h + TOOLBAR_GAP_PX;
   const ceiling = $('figcaption').getBoundingClientRect().bottom;
   const preferred = above >= ceiling ? above

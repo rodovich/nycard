@@ -1,8 +1,9 @@
 import { getState, isPlaceholder, isText, itemsOnSide } from './store.js';
 import { drawText } from './text.js';
-import { drawnPath, isDrawn, shapePolygon } from './shape.js';
+import { drawnPath, isDrawn, itemRotation, shapePolygon } from './shape.js';
 import { getBlob } from './blobs.js';
 import { canvasSize, DPI, SIDES } from './specs.js';
+import { rectCenter } from './geometry.js';
 
 function drawShape(ctx, item) {
   ctx.save();
@@ -20,6 +21,18 @@ function drawShape(ctx, item) {
   ctx.restore();
 }
 
+async function drawPhoto(ctx, item) {
+  const { assetId, frame: f, image: r } = item;
+  const bitmap = await createImageBitmap(await getBlob(assetId));
+  ctx.save();
+  ctx.beginPath();
+  for (const [x, y] of shapePolygon(item)) ctx.lineTo(f.x + x, f.y + y);
+  ctx.clip();
+  ctx.drawImage(bitmap, r.x, r.y, r.w, r.h);
+  ctx.restore();
+  bitmap.close();
+}
+
 async function renderSide(design, side) {
   const { w, h } = canvasSize(design.orientation);
   const canvas = document.createElement('canvas');
@@ -32,23 +45,15 @@ async function renderSide(design, side) {
   ctx.translate(w / 2, h / 2);
   for (const item of itemsOnSide(side, design)) {
     if (isPlaceholder(item)) continue;
-    if (isText(item)) {
-      drawText(ctx, item);
-      continue;
-    }
-    if (isDrawn(item)) {
-      drawShape(ctx, item);
-      continue;
-    }
-    const { assetId, frame: f, image: r } = item;
-    const bitmap = await createImageBitmap(await getBlob(assetId));
+    const center = rectCenter(item.frame);
     ctx.save();
-    ctx.beginPath();
-    for (const [x, y] of shapePolygon(item)) ctx.lineTo(f.x + x, f.y + y);
-    ctx.clip();
-    ctx.drawImage(bitmap, r.x, r.y, r.w, r.h);
+    ctx.translate(center.x, center.y);
+    ctx.rotate(itemRotation(item));
+    ctx.translate(-center.x, -center.y);
+    if (isText(item)) drawText(ctx, item);
+    else if (isDrawn(item)) drawShape(ctx, item);
+    else await drawPhoto(ctx, item);
     ctx.restore();
-    bitmap.close();
   }
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.95));
   return setJpegDpi(new Uint8Array(await blob.arrayBuffer()), DPI);

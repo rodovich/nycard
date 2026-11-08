@@ -1,4 +1,4 @@
-import { clamp, rectFromPoints } from './geometry.js';
+import { clamp, rectFromPoints, rotatedBounds, rotateVector } from './geometry.js';
 
 // Left and right sides stay vertical; only the top and bottom edges slant.
 // A positive `shape.drop` moves the left end of each slanted edge that many
@@ -51,14 +51,15 @@ export function shapePolygon(item) {
   return [[0, tl], [w, tr], [w, h - br], [0, h - bl]];
 }
 
-/** The top and bottom edges in card coordinates, each as [[x0, y0], [x1, y1]] from left to right. */
+/** The top and bottom edges in card coordinates, each as [[x0, y0], [x1, y1]] from the item's own left to its right. */
 export function topAndBottomEdges(item) {
-  const { x, y } = item.frame;
-  const [tl, tr, br, bl] = shapePolygon(item).map(([px, py]) => [x + px, y + py]);
+  const { x, y, w, h } = item.frame;
+  const [tl, tr, br, bl] = shapePolygon(item).map(([px, py]) => {
+    const [rx, ry] = rotateVector(px - w / 2, py - h / 2, itemRotation(item));
+    return [x + w / 2 + rx, y + h / 2 + ry];
+  });
   return [[tl, tr], [bl, br]];
 }
-
-export const edgeSlope = ([[x0, y0], [x1, y1]]) => (y1 - y0) / (x1 - x0);
 
 /**
  * The drop that gives the item's angle-handle edge this slope. A positive drop lowers
@@ -83,6 +84,23 @@ export const isLine = (item) => item.kind === 'line';
 export const isCircle = (item) => item.kind === 'circle';
 export const isDrawn = (item) => item.kind === 'shape' || isCircle(item) || isLine(item);
 
+/** Radians clockwise about the frame's center. */
+export const itemRotation = (item) => item.rotation ?? 0;
+/** A circle looks the same at any angle, and dragging a line's ends already turns it. */
+export const canRotate = (item) => !isCircle(item) && !isLine(item);
+export const itemBounds = (item) => rotatedBounds(item.frame, itemRotation(item));
+
+/** The rotations that line the item up with the card or with any of `angles`, at every quarter turn. */
+export function rotationTargets(item, angles) {
+  const own = ownEdgeAngles(item);
+  return [0, ...angles].flatMap((angle) => own.flatMap((o) => [0, 1, 2, 3].map((k) => angle - o + (k * Math.PI) / 2)));
+}
+
+/** The angles of the item's edges, before its rotation; 0 is the frame's own horizontal. */
+export function ownEdgeAngles(item) {
+  return [0, ...topAndBottomEdges({ ...item, rotation: 0 }).map(edgeAngle)];
+}
+
 /** A line's two ends relative to its frame's top-left, left end first. */
 export function lineLocalEnds({ frame: { w, h }, rising }) {
   return rising ? [[0, h], [w, 0]] : [[0, 0], [w, h]];
@@ -98,7 +116,7 @@ export function lineFromEnds([x0, y0], [x1, y1]) {
 
 export function angledEdges(item) {
   if (isLine(item)) return [lineEnds(item)];
-  return isShaped(item) ? topAndBottomEdges(item) : [];
+  return isShaped(item) || item.rotation ? topAndBottomEdges(item) : [];
 }
 
 export const edgeAngle = ([[x0, y0], [x1, y1]]) => Math.atan2(y1 - y0, x1 - x0);
