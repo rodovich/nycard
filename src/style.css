@@ -28,9 +28,7 @@ button:hover {
   border-color: #8f8c86;
 }
 button.active {
-  background: #1d1d1f;
-  border-color: #1d1d1f;
-  color: #fff;
+  background: rgb(0 0 0 / 0.12);
 }
 button.primary {
   background: #b0322b;
@@ -54,8 +52,10 @@ button.tool {
   padding: 0 8px;
   white-space: nowrap;
 }
-button.tool:not(.active, .primary, .outlined) {
+button.tool:not(.primary, .outlined) {
   border-color: transparent;
+}
+button.tool:not(.active, .primary, .outlined) {
   background: transparent;
 }
 button.tool:not(.active, .primary, .outlined):hover {

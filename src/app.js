@@ -836,6 +836,7 @@ function shapeControls(bar, id) {
   const width = stroked && pointsField(bar, 'Stroke width in points', (strokeWidth) => updateItem(id, { strokeWidth }));
   if (stroked) divider(bar);
   const color = colorPicker(bar, 'Color', (c) => updateItem(id, { color: c }));
+  divider(bar);
   const opacity = slider(bar, 'Opacity', { min: 0, max: 1, step: 0.01 }, (value) => updateItem(id, { opacity: value }));
   return () => {
     const item = getItem(id);
