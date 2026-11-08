@@ -1,5 +1,6 @@
 import {
   addFiles,
+  addShape,
   addText,
   applyLayout,
   clampDrop,
@@ -46,7 +47,7 @@ import { PALETTE } from './palette.js';
 import { LAYOUTS, layoutSlots } from './layouts.js';
 import { downloadCard } from './export.js';
 import { fontSpec, lineGeometry, LINE_HEIGHT } from './text.js';
-import { angleHandlePoints, angleHandleShown, angleHandleSign, dropForSlope, edgeSlope, isShaped, shapePolygon, SHAPES, shapeType, topAndBottomEdges } from './shape.js';
+import { angledEdges, angleHandlePoints, angleHandleShown, angleHandleSign, drawnPath, dropForSlope, edgeAngle, edgeSlope, isCircle, isDrawn, isLine, isParallel, isShaped, lineEnds, lineFromEnds, lineLocalEnds, nearestAngle, shapePolygon, SHAPES, shapeType } from './shape.js';
 import { canListLocalFonts, fontFamilies, listLocalFonts, listLocalFontsIfGranted } from './fonts.js';
 import { icon } from './icons.js';
 
@@ -95,6 +96,39 @@ function iconButton(parent, iconName, title, onClick, className = '') {
 }
 
 const divider = (parent) => el('span', 'divider', parent);
+
+function svgEl(tag, className, parent) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  if (className) e.classList.add(className);
+  parent.append(e);
+  return e;
+}
+
+function slider(parent, name, range, onInput) {
+  const label = el('label', 'slider', parent);
+  label.append(name);
+  const input = el('input', null, label);
+  Object.assign(input, { type: 'range', ...range });
+  input.addEventListener('input', () => onInput(input.valueAsNumber));
+  // The keyboard shortcuts ignore keys pressed while an input has focus.
+  input.addEventListener('pointerdown', () => untilPointerEnd(() => input.blur()));
+  return input;
+}
+
+/** A length field in points. Call `set` on the result with a length in print px to show it. */
+function pointsField(parent, title, onInput) {
+  const input = el('input', 'size', parent);
+  input.type = 'number';
+  input.min = '1';
+  input.title = title;
+  input.addEventListener('input', () => input.valueAsNumber > 0 && onInput(ptToPx(input.valueAsNumber)));
+  el('span', 'unit', parent).textContent = 'pt';
+  return {
+    set(px) {
+      if (document.activeElement !== input) input.value = Math.round(pxToPt(px) * 10) / 10;
+    },
+  };
+}
 
 function place(e, r) {
   Object.assign(e.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
@@ -167,6 +201,15 @@ function layoutPicker(parent, side) {
       }
     }
   });
+}
+
+function shapePicker(parent, side) {
+  const trigger = toolButton(parent, 'shape', 'Shape');
+  const menu = el('div', 'more-menu', parent);
+  attachPopover(trigger, menu);
+  for (const [type, label] of Object.entries({ circle: 'Circle', line: 'Line', ...SHAPES })) {
+    toolButton(menu, type, label, () => addShape(side, type));
+  }
 }
 
 function drawThumb(parent, { images, texts }, orientation) {
@@ -259,6 +302,19 @@ function renderText(e, t) {
 
 const polygonPoints = (item) => shapePolygon(item).map(([x, y]) => `${x},${y}`).join(' ');
 
+function renderDrawn(e, item) {
+  const [paint, hit] = e.firstChild.children;
+  const d = drawnPath(item);
+  paint.setAttribute('d', d);
+  hit.setAttribute('d', d);
+  Object.assign(paint.style, {
+    fill: item.stroked ? 'none' : item.color,
+    stroke: item.stroked ? item.color : 'none',
+    strokeWidth: `${item.strokeWidth}px`,
+  });
+  e.style.opacity = item.opacity;
+}
+
 function startEditing(id) {
   editingId = id;
   select([id]);
@@ -279,6 +335,7 @@ function buildCard(side) {
   const caption = $('figcaption', figure);
   imagePicker(caption, side);
   toolButton(caption, 'text', 'Text', () => startEditing(addText(side)));
+  shapePicker(caption, side);
   layoutPicker(caption, side);
   divider(caption);
   const picker = colorPicker(caption, 'Background color', (color) => update((s) => (s.backgrounds[side] = color)));
@@ -294,11 +351,8 @@ function buildCard(side) {
   const lines = el('div', 'snap-lines', overlayOrigin);
   const outlines = el('div', 'outlines', overlayOrigin);
   const selection = el('div', 'selection', overlayOrigin);
-  const outline = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  outline.classList.add('shape-outline');
-  const outlinePolygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-  outline.append(outlinePolygon);
-  selection.append(outline);
+  const outline = svgEl('svg', 'shape-outline', selection);
+  const outlinePolygon = svgEl('polygon', null, outline);
   for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
     el('div', `handle ${h}`, selection).dataset.handle = h;
   }
@@ -306,6 +360,11 @@ function buildCard(side) {
     const handle = el('div', 'handle angle', selection);
     handle.dataset.handle = h;
     handle.title = 'Drag to change the angle';
+    return handle;
+  });
+  const lineHandles = ['line-start', 'line-end'].map((h) => {
+    const handle = el('div', 'handle end', selection);
+    handle.dataset.handle = h;
     return handle;
   });
   const marquee = el('div', 'marquee', overlayOrigin);
@@ -316,7 +375,7 @@ function buildCard(side) {
   editor.addEventListener('blur', () => document.hasFocus() && stopEditing());
   cards[side] = {
     card, picker, surface, items, guides, trim, safe, overlay, ghost, lines, outlines, selection, marquee, editor,
-    outline, outlinePolygon, angleHandles, els: new Map(),
+    outline, outlinePolygon, angleHandles, lineHandles, els: new Map(),
   };
 
   card.addEventListener('pointerdown', (e) => onPointerDown(e, side));
@@ -325,7 +384,7 @@ function buildCard(side) {
     if (!item) return;
     if (isText(item)) startEditing(item.id);
     else if (isPlaceholder(item)) choosePhotoFor(item.id);
-    else toggleCrop(item.id);
+    else if (isImage(item)) toggleCrop(item.id);
   });
   card.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -370,6 +429,11 @@ function renderCard(side) {
       e.dataset.kind = kind;
       if (kind === 'image') el('img', null, e).draggable = false;
       if (kind === 'placeholder') el('span', null, e).textContent = 'Drop a photo here or double-click';
+      if (isDrawn(item)) {
+        const svg = svgEl('svg', null, e);
+        svgEl('path', null, svg);
+        svgEl('path', 'hit', svg);
+      }
       c.els.set(item.id, e);
     }
     if (c.items.children[index] !== e) c.items.insertBefore(e, c.items.children[index] ?? null);
@@ -382,6 +446,8 @@ function renderCard(side) {
       const img = e.firstChild;
       setSrc(img, assetUrl(item.assetId));
       place(img, { ...item.image, x: item.image.x - item.frame.x, y: item.image.y - item.frame.y });
+    } else if (isDrawn(item)) {
+      renderDrawn(e, item);
     }
   });
 
@@ -397,6 +463,11 @@ function renderCard(side) {
     c.selection.classList.toggle('cropping', !!cropping);
     c.selection.classList.toggle('text', isText(single));
     c.selection.classList.toggle('shaped', isShaped(single));
+    c.selection.classList.toggle('circle', isCircle(single));
+    c.selection.classList.toggle('line', isLine(single));
+    if (isLine(single)) {
+      lineLocalEnds(single).forEach(([x, y], i) => Object.assign(c.lineHandles[i].style, { left: `${x}px`, top: `${y}px` }));
+    }
     c.outline.style.display = isShaped(single) ? '' : 'none';
     c.outlinePolygon.setAttribute('points', polygonPoints(single));
     const points = angleHandlePoints(single);
@@ -425,7 +496,7 @@ function renderCard(side) {
   for (const [[x0, y0], [x1, y1]] of hints.edges ?? []) {
     const line = el('div', null, c.lines);
     place(line, { x: x0, y: y0, w: Math.hypot(x1 - x0, y1 - y0), h: 0 });
-    Object.assign(line.style, { transformOrigin: '0 0', transform: `rotate(${Math.atan2(y1 - y0, x1 - x0)}rad)` });
+    Object.assign(line.style, { transformOrigin: '0 0', transform: `rotate(${edgeAngle([[x0, y0], [x1, y1]])}rad)` });
   }
   c.marquee.hidden = !hints.marquee;
   if (hints.marquee) place(c.marquee, hints.marquee);
@@ -500,13 +571,13 @@ function startDrag(e, side, handle, onClick) {
   const edge = handle?.length === 1;
   const mode = !handle
     ? cropping ? 'pan' : 'move'
-    : handle.startsWith('angle') ? 'angle' : cropping ? 'crop' : edge ? 'stretch' : 'resize';
+    : handle.startsWith('angle') ? 'angle' : handle.startsWith('line') ? 'line' : cropping ? 'crop' : edge ? 'stretch' : 'resize';
   const bounds = unionRect(starts.map((st) => st.frame));
   const targets = snapTargets(side, selectedIds);
+  const otherEdges = itemsOnSide(side).filter((i) => !selectedIds.includes(i.id)).flatMap(angledEdges);
+  const lineAngles = [0, Math.PI / 2, ...otherEdges.map(edgeAngle)];
   const edgeDrops = mode === 'angle'
-    ? itemsOnSide(side)
-      .filter((i) => !selectedIds.includes(i.id) && isShaped(i))
-      .flatMap(topAndBottomEdges)
+    ? otherEdges
       .filter((edge) => edgeSlope(edge) !== 0)
       .map((edge) => [edge, dropForSlope(starts[0], edgeSlope(edge))])
     : [];
@@ -521,6 +592,14 @@ function startDrag(e, side, handle, onClick) {
       const edges = edgeDrops.filter(([, drop]) => matched.includes(drop)).map(([edge]) => edge);
       dragHints = ev.altKey ? null : { side, edges };
       return updateItems([[start.id, next]]);
+    }
+    if (mode === 'line') {
+      const [start] = starts;
+      const { fixed, end, angle } = moveLineEnd(start, dx, dy, ev.altKey ? null : targets, lineAngles);
+      if (Math.hypot(end[0] - fixed[0], end[1] - fixed[1]) < MIN_SIZE) return;
+      const edges = angle === undefined ? [] : [[fixed, end], ...otherEdges.filter((edge) => isParallel(edgeAngle(edge), angle))];
+      dragHints = ev.altKey ? null : { side, edges, lines: { x: targets.x.touching([end[0]]), y: targets.y.touching([end[1]]) } };
+      return updateItems([[start.id, lineFromEnds(fixed, end)]]);
     }
     const snapping = !ev.altKey && mode !== 'pan';
     let patches;
@@ -545,6 +624,26 @@ function startDrag(e, side, handle, onClick) {
       : null;
     updateItems(patches);
   }, onClick);
+}
+
+/** `targets` is null when snapping is off. The result has an `angle` if the line snapped to one of `angles`. */
+function moveLineEnd(start, dx, dy, targets, angles) {
+  const ends = lineEnds(start);
+  const moving = start.handle === 'line-start' ? 0 : 1;
+  const fixed = ends[1 - moving];
+  const pointer = [ends[moving][0] + dx, ends[moving][1] + dy];
+  if (!targets) return { fixed, end: pointer };
+  const tolerance = SNAP_SCREEN_PX / scale;
+  const angle = nearestAngle(fixed, pointer, angles, tolerance);
+  if (angle === null) return { fixed, end: [targets.x.snap(pointer[0]), targets.y.snap(pointer[1])] };
+  const [ux, uy] = [Math.cos(angle), Math.sin(angle)];
+  const along = (pointer[0] - fixed[0]) * ux + (pointer[1] - fixed[1]) * uy;
+  const onRay = [fixed[0] + along * ux, fixed[1] + along * uy];
+  // Sliding along the ray can align the end with other items without changing the angle.
+  const [slide = 0] = [targets.x.delta([onRay[0]]) / ux, targets.y.delta([onRay[1]]) / uy]
+    .filter((s) => s && Math.abs(s) <= 2 * tolerance)
+    .sort((a, b) => Math.abs(a) - Math.abs(b));
+  return { fixed, end: [onRay[0] + slide * ux, onRay[1] + slide * uy], angle };
 }
 
 function snapTargets(side, excludeIds) {
@@ -634,7 +733,7 @@ function renderToolbar() {
   const s = getState();
   const items = selectedItems();
   const key = JSON.stringify([
-    s.selectedIds, s.cropId, items.map((i) => [i.side, i.kind]), !s.items.length, canListLocalFonts(),
+    s.selectedIds, s.cropId, items.map((i) => [i.side, i.kind, i.stroked]), !s.items.length, canListLocalFonts(),
   ]);
   if (key !== toolbarKey) {
     toolbarKey = key;
@@ -674,7 +773,7 @@ function buildToolbar(items) {
   if (!items.length) {
     hint.textContent = s.items.length
       ? 'Click to select; Shift-click or drag a box to select several. Double-click an image to crop it, or text to edit it. Hold Option (Alt) while dragging to stop snapping.'
-      : 'Use the buttons above each side to add photos, text, or a layout.';
+      : 'Use the buttons above each side to add photos, text, shapes, or a layout.';
     return;
   }
   const [item] = items;
@@ -696,6 +795,8 @@ function buildToolbar(items) {
     refreshers.push(textControls(bar, id));
   } else if (isPlaceholder(item)) {
     toolButton(bar, 'image', 'Choose photo…', () => choosePhotoFor(id));
+  } else if (isDrawn(item)) {
+    refreshers.push(shapeControls(bar, id));
   } else {
     refreshers.push(photoControls(bar, id));
   }
@@ -711,13 +812,7 @@ function photoControls(bar, id) {
   toolButton(bar, 'fill', 'Fill card', () => fillCard(id));
   toolButton(bar, 'full', 'Full photo', () => updateItem(id, { frame: { ...getItem(id).image } }));
   divider(bar);
-  const label = el('label', 'zoom', bar);
-  label.append('Zoom');
-  const zoom = el('input', null, label);
-  Object.assign(zoom, { type: 'range', min: 1, max: MAX_PHOTO_ZOOM, step: 0.01 });
-  zoom.addEventListener('input', () => setPhotoZoom(id, zoom.valueAsNumber));
-  // The keyboard shortcuts ignore keys pressed while an input has focus.
-  zoom.addEventListener('pointerdown', () => untilPointerEnd(() => zoom.blur()));
+  const zoom = slider(bar, 'Zoom', { min: 1, max: MAX_PHOTO_ZOOM, step: 0.01 }, (value) => setPhotoZoom(id, value));
   divider(bar);
   const res = el('span', 'dpi', bar);
   return () => {
@@ -730,22 +825,47 @@ function photoControls(bar, id) {
   };
 }
 
+function shapeControls(bar, id) {
+  const { stroked } = getItem(id);
+  if (!isLine(getItem(id))) {
+    const paintMode = (name, title, value) => iconButton(bar, name, title, () => updateItem(id, { stroked: value }), stroked === value ? 'active' : '');
+    paintMode('solid', 'Fill', false);
+    paintMode('outline', 'Stroke', true);
+    divider(bar);
+  }
+  const width = stroked && pointsField(bar, 'Stroke width in points', (strokeWidth) => updateItem(id, { strokeWidth }));
+  if (stroked) divider(bar);
+  const color = colorPicker(bar, 'Color', (c) => updateItem(id, { color: c }));
+  const opacity = slider(bar, 'Opacity', { min: 0, max: 1, step: 0.01 }, (value) => updateItem(id, { opacity: value }));
+  return () => {
+    const item = getItem(id);
+    color.set(item.color);
+    opacity.value = item.opacity;
+    if (width) width.set(item.strokeWidth);
+  };
+}
+
 function moreMenu(bar, id, moveToOther) {
   const trigger = iconButton(bar, 'more', 'More');
   const menu = el('div', 'more-menu', bar);
   attachPopover(trigger, menu);
-  const shape = el('select', null, menu);
-  shape.title = 'Shape';
-  for (const [type, label] of Object.entries(SHAPES)) {
-    const option = el('option', null, shape);
-    option.value = type;
-    option.textContent = label;
+  const hasCorners = !isCircle(getItem(id)) && !isLine(getItem(id));
+  const shape = hasCorners && el('select', null, menu);
+  if (shape) {
+    shape.title = 'Shape';
+    for (const [type, label] of Object.entries(SHAPES)) {
+      const option = el('option', null, shape);
+      option.value = type;
+      option.textContent = label;
+    }
+    shape.addEventListener('change', () => setShape(id, shape.value));
   }
-  shape.addEventListener('change', () => setShape(id, shape.value));
   toolButton(menu, 'forward', 'Bring forward', () => restack(id, 1));
   toolButton(menu, 'backward', 'Send backward', () => restack(id, -1));
   moveToOther(menu);
-  return () => (shape.value = shapeType(getItem(id)));
+  return () => {
+    if (shape) shape.value = shapeType(getItem(id));
+  };
 }
 
 function textControls(bar, id) {
@@ -775,12 +895,7 @@ function textControls(bar, id) {
     render();
   });
 
-  const size = el('input', 'size', bar);
-  size.type = 'number';
-  size.min = '1';
-  size.title = 'Font size in points';
-  size.addEventListener('input', () => size.valueAsNumber > 0 && updateItem(id, { size: ptToPx(size.valueAsNumber) }));
-  el('span', 'unit', bar).textContent = 'pt';
+  const size = pointsField(bar, 'Font size in points', (px) => updateItem(id, { size: px }));
 
   divider(bar);
   const color = colorPicker(bar, 'Text color', (c) => updateItem(id, { color: c }));
@@ -794,7 +909,7 @@ function textControls(bar, id) {
   return () => {
     const t = getItem(id);
     font.value = t.font;
-    if (document.activeElement !== size) size.value = Math.round(pxToPt(t.size) * 10) / 10;
+    size.set(t.size);
     color.set(t.color);
     bold.classList.toggle('active', t.bold);
     italic.classList.toggle('active', t.italic);

@@ -22,6 +22,16 @@ const PATHS = {
   left: '<path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/>',
   center: '<path d="M4 6h16"/><path d="M7 12h10"/><path d="M6 18h12"/>',
   right: '<path d="M4 6h16"/><path d="M10 12h10"/><path d="M7 18h13"/>',
+  shape: '<circle cx="8.5" cy="8.5" r="5.5"/><rect x="10" y="10" width="11" height="11" rx="1"/>',
+  circle: '<circle cx="12" cy="12" r="9"/>',
+  line: '<path d="M4 20 20 4"/>',
+  rect: '<rect x="3" y="6" width="18" height="12"/>',
+  parallelogram: '<path d="M3 9 21 4v11L3 20Z"/>',
+  trapezoid: '<path d="M3 9 21 4v16L3 15Z"/>',
+  top: '<path d="M3 9 21 4v16H3Z"/>',
+  bottom: '<path d="M3 4h18v11L3 20Z"/>',
+  solid: '<circle cx="12" cy="12" r="8" fill="currentColor"/>',
+  outline: '<circle cx="12" cy="12" r="8"/>',
   more: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
 };
 

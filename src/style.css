@@ -153,13 +153,13 @@ main {
   padding: 0 6px;
   color: #6b6964;
 }
-#toolbar .zoom {
+#toolbar .slider {
   display: flex;
   align-items: center;
   gap: 6px;
   color: #6b6964;
 }
-#toolbar .zoom input {
+#toolbar .slider input {
   width: 90px;
   margin: 0;
   padding: 0;
@@ -360,6 +360,31 @@ main {
 .item.text {
   overflow: visible;
 }
+/* The empty parts of the frame don't take clicks, so items behind a hollow shape stay reachable. */
+.item:is(.shape, .circle, .line) {
+  overflow: visible;
+  pointer-events: none;
+}
+/* A fixed size because an SVG with a zero width or height, like the frame of a level or upright line, draws nothing. */
+.item svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+}
+.item svg path {
+  pointer-events: visiblePainted;
+  /* The canvas default, so corners match the export. */
+  stroke-miterlimit: 10;
+}
+.item svg path.hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: calc(14px / var(--scale));
+  pointer-events: stroke;
+}
 .item.placeholder {
   display: flex;
   align-items: center;
@@ -462,6 +487,21 @@ main {
 /* Text height follows its lines, so text has no top or bottom handles. */
 .selection.text .handle:is(.n, .s) {
   display: none;
+}
+/* A circle only resizes from its corners, which keep it round. */
+.selection.circle .handle:is(.n, .s, .e, .w) {
+  display: none;
+}
+.selection.line {
+  outline: none;
+}
+.selection.line .handle:not(.end),
+.selection:not(.line) .handle.end {
+  display: none;
+}
+.selection .handle.end {
+  border-radius: 50%;
+  cursor: crosshair;
 }
 .selection.cropping {
   outline-style: dashed;

@@ -3,7 +3,7 @@ import { bleedRect, canvasSize, ptToPx, SIDES, trimRect } from './specs.js';
 import { defaultFamily } from './fonts.js';
 import { clamp, containRect, coverRect, growToCover, offsetRect, scaleRect } from './geometry.js';
 import { textHeight } from './text.js';
-import { imageDropLimit, slantedEdges, slantHeight } from './shape.js';
+import { imageDropLimit, isDrawn, slantedEdges, slantHeight } from './shape.js';
 
 const KEY = 'nycard.design.v2';
 const V1_KEY = 'nycard.design.v1';
@@ -13,6 +13,8 @@ const V1_KEY = 'nycard.design.v1';
  * `frame` is the visible (cropped) rectangle; `image` is where the whole
  * source image sits, so cropping is the part of `image` inside `frame`.
  * Text items (`kind: 'text'`) have no `image`; their frame height follows the wrapped text.
+ * Drawn items (`kind: 'shape' | 'circle' | 'line'`) have no `image` either. A line runs corner to
+ * corner across its frame, from top-left to bottom-right unless `rising` is set.
  */
 function initialState() {
   return {
@@ -59,8 +61,8 @@ export function offsetItem({ frame, image }, dx, dy) {
 export const isText = (item) => item.kind === 'text';
 /** An empty photo slot left by a layout. It isn't exported. */
 export const isPlaceholder = (item) => item.kind === 'placeholder';
-export const isImage = (item) => !isText(item) && !isPlaceholder(item);
-export const holdsPhoto = (item) => !isText(item);
+export const isImage = (item) => !isText(item) && !isPlaceholder(item) && !isDrawn(item);
+export const holdsPhoto = (item) => isImage(item) || isPlaceholder(item);
 
 export const getState = () => state;
 export const subscribe = (fn) => (listeners.add(fn), () => listeners.delete(fn));
@@ -146,12 +148,12 @@ export function clampDrop(item, type, drop) {
   return clamp(drop, -limit, limit);
 }
 
-export function setShape(id, type) {
-  const item = getItem(id);
-  if (type === 'rect') return updateItem(id, { shape: undefined });
-  const drop = item.shape?.drop || item.frame.w * 0.12;
-  updateItem(id, { shape: { type, drop: clampDrop(item, type, drop) } });
+function quadShape(item, type) {
+  if (type === 'rect') return undefined;
+  return { type, drop: clampDrop(item, type, item.shape?.drop || item.frame.w * 0.12) };
 }
+
+export const setShape = (id, type) => updateItem(id, { shape: quadShape(getItem(id), type) });
 
 /** Re-measures text without adding an undo step, since fonts can measure differently than when the design was saved. */
 export const refitText = () => update((s) => s.items.filter(isText).forEach(fitText), { undoable: false });
@@ -299,6 +301,18 @@ export function addText(side) {
   return addItem(fitTextToSlot(newText(side), { x: -w * 0.4, y: 0, w: w * 0.8, h: 0 }));
 }
 
+/** `type` is 'circle', 'line', or one of the quadrilaterals in SHAPES. */
+export function addShape(side, type) {
+  const { w, h } = trimRect(state.orientation);
+  const size = Math.min(w, h) * 0.4;
+  const frame = { x: -size / 2, y: -size / 2, w: size, h: size };
+  const paint = { side, stroked: false, strokeWidth: ptToPx(2), color: '#1d1d1f', opacity: 1 };
+  if (type === 'line') return addItem({ ...paint, kind: 'line', stroked: true, rising: false, frame: { ...frame, y: 0, h: 0 } });
+  if (type === 'circle') return addItem({ ...paint, kind: 'circle', frame });
+  const shape = { ...paint, kind: 'shape', frame };
+  return addItem({ ...shape, shape: quadShape(shape, type) });
+}
+
 export function applyLayout(side, slots) {
   const byArea = ({ frame: a }, { frame: b }) => b.w * b.h - a.w * a.h;
   const items = itemsOnSide(side);
@@ -314,7 +328,7 @@ export function applyLayout(side, slots) {
     fitTextToSlot({ ...(texts[i] ?? { id: crypto.randomUUID(), ...newText(side), text }), ...style }, slot),
   );
   update((s) => {
-    s.items = [...s.items.filter((i) => i.side !== side), ...pictures, ...words];
+    s.items = [...s.items.filter((i) => i.side !== side), ...pictures, ...items.filter(isDrawn), ...words];
     pruneSelection(s);
   });
 }

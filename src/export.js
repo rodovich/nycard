@@ -1,8 +1,24 @@
 import { getState, isPlaceholder, isText, itemsOnSide } from './store.js';
 import { drawText } from './text.js';
-import { shapePolygon } from './shape.js';
+import { drawnPath, isDrawn, shapePolygon } from './shape.js';
 import { getBlob } from './blobs.js';
 import { canvasSize, DPI, SIDES } from './specs.js';
+
+function drawShape(ctx, item) {
+  ctx.save();
+  ctx.translate(item.frame.x, item.frame.y);
+  ctx.globalAlpha = item.opacity;
+  const path = new Path2D(drawnPath(item));
+  if (item.stroked) {
+    ctx.strokeStyle = item.color;
+    ctx.lineWidth = item.strokeWidth;
+    ctx.stroke(path);
+  } else {
+    ctx.fillStyle = item.color;
+    ctx.fill(path);
+  }
+  ctx.restore();
+}
 
 async function renderSide(design, side) {
   const { w, h } = canvasSize(design.orientation);
@@ -18,6 +34,10 @@ async function renderSide(design, side) {
     if (isPlaceholder(item)) continue;
     if (isText(item)) {
       drawText(ctx, item);
+      continue;
+    }
+    if (isDrawn(item)) {
+      drawShape(ctx, item);
       continue;
     }
     const { assetId, frame: f, image: r } = item;

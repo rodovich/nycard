@@ -1,4 +1,4 @@
-import { clamp } from './geometry.js';
+import { clamp, rectFromPoints } from './geometry.js';
 
 // Left and right sides stay vertical; only the top and bottom edges slant.
 // A positive `shape.drop` moves the left end of each slanted edge that many
@@ -77,4 +77,55 @@ export function angleHandlePoints(item) {
   const [tl, tr, br, bl] = shapePolygon(item);
   const [[x0, y0], [x1, y1]] = shapeType(item) === 'bottom' ? [bl, br] : [tl, tr];
   return [0.15, 0.85].map((t) => [x0 + (x1 - x0) * t, y0 + (y1 - y0) * t]);
+}
+
+export const isLine = (item) => item.kind === 'line';
+export const isCircle = (item) => item.kind === 'circle';
+export const isDrawn = (item) => item.kind === 'shape' || isCircle(item) || isLine(item);
+
+/** A line's two ends relative to its frame's top-left, left end first. */
+export function lineLocalEnds({ frame: { w, h }, rising }) {
+  return rising ? [[0, h], [w, 0]] : [[0, 0], [w, h]];
+}
+
+/** A line's two ends in card coordinates, left end first. */
+export const lineEnds = (item) => lineLocalEnds(item).map(([x, y]) => [item.frame.x + x, item.frame.y + y]);
+
+/** The frame and direction of a line between two points given in either order. */
+export function lineFromEnds([x0, y0], [x1, y1]) {
+  return { frame: rectFromPoints({ x: x0, y: y0 }, { x: x1, y: y1 }), rising: (x1 - x0) * (y1 - y0) < 0 };
+}
+
+export function angledEdges(item) {
+  if (isLine(item)) return [lineEnds(item)];
+  return isShaped(item) ? topAndBottomEdges(item) : [];
+}
+
+export const edgeAngle = ([[x0, y0], [x1, y1]]) => Math.atan2(y1 - y0, x1 - x0);
+
+export const isParallel = (a, b) => Math.abs(Math.sin(a - b)) < 1e-6;
+
+/**
+ * The one of `angles` (radians) whose line through `from` passes closest to `to`,
+ * or null if none passes within `tolerance`.
+ */
+export function nearestAngle(from, to, angles, tolerance) {
+  let best = null;
+  let bestDist = tolerance;
+  for (const angle of angles) {
+    const dist = Math.abs((to[0] - from[0]) * Math.sin(angle) - (to[1] - from[1]) * Math.cos(angle));
+    if (dist <= bestDist) {
+      bestDist = dist;
+      best = angle;
+    }
+  }
+  return best;
+}
+
+/** SVG path data for a drawn item, relative to its frame's top-left. */
+export function drawnPath(item) {
+  const { w, h } = item.frame;
+  if (isLine(item)) return `M${lineLocalEnds(item).join('L')}`;
+  if (isCircle(item)) return `M0 ${h / 2}A${w / 2} ${h / 2} 0 1 0 ${w} ${h / 2}A${w / 2} ${h / 2} 0 1 0 0 ${h / 2}Z`;
+  return `M${shapePolygon(item).join('L')}Z`;
 }
