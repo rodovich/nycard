@@ -182,11 +182,14 @@ main {
   background: #fff;
 }
 #toolbar .font {
-  max-width: 180px;
+  flex-shrink: 0;
+  width: 180px;
   padding: 0 6px;
 }
 #toolbar .font span {
+  flex: 1;
   overflow: hidden;
+  text-align: left;
   text-overflow: ellipsis;
 }
 .font-menu {
