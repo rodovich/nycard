@@ -2,7 +2,7 @@
 
 A single-page app for laying out a two-sided 5×7 flat card to upload to Paper Culture as your own design.
 
-Install Node.js 24 and Git, and use a modern web browser. There are no third-party dependencies to install and no build step.
+Install Node.js 26 and Git, and use a modern web browser. There are no third-party dependencies to install and no build step.
 
 Clone the repository and start the development server:
 
