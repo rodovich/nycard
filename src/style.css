@@ -211,6 +211,8 @@ main {
 .palette:popover-open {
   display: grid;
   grid-template-columns: repeat(8, 22px);
+  grid-auto-rows: 22px;
+  height: max-content;
   gap: 6px;
 }
 
