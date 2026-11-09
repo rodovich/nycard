@@ -82,5 +82,9 @@ export async function downloadCard() {
   const design = structuredClone(getState());
   const files = [];
   for (const side of SIDES) files.push([await renderSide(design, side), `new-years-card-${side}.jpg`]);
-  for (const [blob, name] of files) download(blob, name);
+  for (const [blob, name] of files) {
+    download(blob, name);
+    // Browsers can drop downloads started in quick succession.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 }
