@@ -29,7 +29,6 @@ import {
   restack,
   select,
   selectedItems,
-  setOrientation,
   setPhotoZoom,
   setShape,
   subscribe,
@@ -201,16 +200,16 @@ function layoutPicker(parent, side) {
   const trigger = toolButton(parent, 'layout', 'Layout');
   const panel = el('div', 'layout-panel', parent);
   attachPopover(trigger, panel, () => {
-    const { orientation } = getState();
+    const design = getState();
     panel.replaceChildren();
-    const layouts = LAYOUTS[orientation];
+    const layouts = LAYOUTS[design.orientation];
     for (const count of [...new Set(layouts.map((l) => l.images.length))].sort((a, b) => a - b)) {
       el('h3', null, panel).textContent = count === 1 ? '1 photo' : `${count} photos`;
       const row = el('div', 'layout-row', panel);
       for (const layout of layouts.filter((l) => l.images.length === count)) {
-        const b = button(row, '', () => applyLayout(side, layoutSlots(layout, orientation)), 'layout-thumb');
+        const b = button(row, '', () => applyLayout(side, layoutSlots(layout, design)), 'layout-thumb');
         b.title = layout.name;
-        drawThumb(b, layout, orientation);
+        drawThumb(b, layout, design);
       }
     }
   });
@@ -225,8 +224,8 @@ function shapePicker(parent, side) {
   }
 }
 
-function drawThumb(parent, { images, texts }, orientation) {
-  const { w, h } = trimRect(orientation);
+function drawThumb(parent, { images, texts }, design) {
+  const { w, h } = trimRect(design);
   parent.style.aspectRatio = `${w} / ${h}`;
   const pct = ([x, y, rw, rh]) => ({ left: `${x * 100}%`, top: `${y * 100}%`, width: `${rw * 100}%`, height: `${rh * 100}%` });
   for (const [x, y, rw, rh, type, drop] of images) {
@@ -413,7 +412,7 @@ function buildCard(side) {
 function renderCard(side) {
   const s = getState();
   const c = cards[side];
-  const { w, h } = canvasSize(s.orientation);
+  const { w, h } = canvasSize(s);
   c.card.style.width = `${w * scale}px`;
   c.card.style.height = `${h * scale}px`;
   // Keeps the toolbar above the card from widening the side beyond the card; it wraps instead.
@@ -422,8 +421,8 @@ function renderCard(side) {
   for (const layer of [c.surface, c.overlay]) Object.assign(layer.style, { width: `${w}px`, height: `${h}px` });
   c.surface.style.background = s.backgrounds[side];
   c.picker.set(s.backgrounds[side]);
-  place(c.trim, trimRect(s.orientation));
-  place(c.safe, safeRect(s.orientation));
+  place(c.trim, trimRect(s));
+  place(c.safe, safeRect(s));
   c.guides.hidden = !s.showGuides;
 
   const items = itemsOnSide(side);
@@ -513,7 +512,7 @@ function renderCard(side) {
 
   const hints = dragHints?.side === side ? dragHints : {};
   c.lines.replaceChildren();
-  const card = bleedRect(s.orientation);
+  const card = bleedRect(s);
   for (const x of hints.lines?.x ?? []) place(el('div', null, c.lines), { ...card, x, w: 0 });
   for (const y of hints.lines?.y ?? []) place(el('div', null, c.lines), { ...card, y, h: 0 });
   for (const [[x0, y0], [x1, y1]] of hints.edges ?? []) {
@@ -695,9 +694,9 @@ function moveLineEnd(start, dx, dy, targets, angles) {
 }
 
 function snapTargets(side, excludeIds) {
-  const { orientation } = getState();
+  const design = getState();
   const others = itemsOnSide(side).filter((i) => !excludeIds.includes(i.id));
-  const rects = [bleedRect(orientation), trimRect(orientation), safeRect(orientation), ...others.map(itemBounds)];
+  const rects = [bleedRect(design), trimRect(design), safeRect(design), ...others.map(itemBounds)];
   const axis = (a) => snapper(rects.flatMap((r) => alignLines(r, a)), SNAP_SCREEN_PX / scale);
   return { x: axis('x'), y: axis('y') };
 }
@@ -1071,10 +1070,13 @@ function setupFileInputs() {
   });
 }
 
+const HEADER_CHOICES = ['template', 'orientation'];
+const choiceButtons = (key) => document.querySelectorAll(`#${key} button`);
+
 function renderHeader() {
   const s = getState();
-  for (const b of document.querySelectorAll('#orientation button')) {
-    b.classList.toggle('active', b.dataset.orientation === s.orientation);
+  for (const key of HEADER_CHOICES) {
+    for (const b of choiceButtons(key)) b.classList.toggle('active', b.dataset[key] === s[key]);
   }
   $('#guides').classList.toggle('active', s.showGuides);
 }
@@ -1083,16 +1085,16 @@ function setupHeader() {
   const history = $('#history');
   iconButton(history, 'undo', 'Undo', () => undo());
   iconButton(history, 'redo', 'Redo', () => redo());
-  for (const b of document.querySelectorAll('#orientation button')) {
-    b.prepend(icon(b.dataset.orientation));
-    b.addEventListener('click', () => setOrientation(b.dataset.orientation));
+  for (const key of HEADER_CHOICES) {
+    for (const b of choiceButtons(key)) b.addEventListener('click', () => update((s) => (s[key] = b.dataset[key])));
   }
+  for (const b of choiceButtons('orientation')) b.prepend(icon(b.dataset.orientation));
   const guides = $('#guides');
   guides.prepend(icon('guides'));
   guides.addEventListener('click', () => update((s) => (s.showGuides = !s.showGuides)));
   const specTrigger = iconButton($('#spec'), 'info', 'Print specs');
   const specPanel = el('div', 'spec-panel', $('#spec'));
-  attachPopover(specTrigger, specPanel, () => (specPanel.textContent = specSummary(getState().orientation)));
+  attachPopover(specTrigger, specPanel, () => (specPanel.textContent = specSummary(getState())));
   const dl = $('#download');
   dl.prepend(icon('download'));
   dl.addEventListener('click', async () => {
@@ -1152,7 +1154,7 @@ function fitStage() {
   const availW = (stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - gap) / 2;
   const caption = $('figcaption').offsetHeight + 8;
   const availH = stage.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - caption;
-  const { w, h } = canvasSize(getState().orientation);
+  const { w, h } = canvasSize(getState());
   scale = Math.max(0.05, Math.min(availW / w, availH / h));
 }
 

@@ -1,6 +1,6 @@
 # New Year's card designer
 
-A single-page app for laying out a two-sided 5×7 flat card to upload to Paper Culture as your own design.
+A single-page app for laying out a two-sided 5×7 or 6×4 flat card to upload to Paper Culture as your own design.
 
 Install Node.js 26 and Git, and use a modern web browser. There are no third-party dependencies to install and no build step.
 
@@ -18,4 +18,11 @@ To use a different port, run `PORT=5174 node dev-server.js` and open http://loca
 
 Editing any file reloads the app (CSS is swapped without a reload). The design is saved in browser storage, so it survives reloads.
 
-The download button saves `new-years-card-front.jpg` and `new-years-card-back.jpg`. Each is 5.25×7.125 in at 400 dpi (2100×2850 px, or 2850×2100 px for landscape). That is the design size Paper Culture's 5X7FLAT DIY template gives for a card that trims to 5.125×7.0 in. The print specs are in `src/specs.js`.
+The download button saves `new-years-card-front.jpg` and `new-years-card-back.jpg`. Each is sized to Paper Culture's DIY template for the card size chosen in the header, at 400 dpi:
+
+| Template | Trims to | Upload size | Portrait | Landscape |
+| --- | --- | --- | --- | --- |
+| 5X7FLAT | 5.125×7.0 in | 5.25×7.125 in | 2100×2850 px | 2850×2100 px |
+| 6X4FLAT | 4.3×6.0 in | 4.55×6.25 in | 1820×2500 px | 2500×1820 px |
+
+The print specs are in `src/specs.js`.

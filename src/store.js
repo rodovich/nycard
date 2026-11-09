@@ -1,5 +1,5 @@
 import { blobIds, deleteBlob, getBlob, putBlob } from './blobs.js';
-import { bleedRect, canvasSize, ptToPx, SIDES, trimRect } from './specs.js';
+import { bleedRect, canvasSize, DEFAULT_TEMPLATE, ptToPx, SIDES, trimRect } from './specs.js';
 import { defaultFamily } from './fonts.js';
 import { clamp, containRect, coverRect, growToCover, offsetRect, rotateVector, scaleRect } from './geometry.js';
 import { textHeight } from './text.js';
@@ -18,6 +18,7 @@ const V1_KEY = 'nycard.design.v1';
  */
 function initialState() {
   return {
+    template: DEFAULT_TEMPLATE,
     orientation: 'portrait',
     backgrounds: Object.fromEntries(SIDES.map((side) => [side, '#ffffff'])),
     assets: [],
@@ -48,7 +49,7 @@ function load() {
 /** v1 measured from the top-left corner of the bleed and had a single selection. */
 function fromV1(v1) {
   if (!v1) return null;
-  const { w, h } = v1.canvas ?? canvasSize(v1.orientation);
+  const { w, h } = v1.canvas ?? canvasSize({ ...initialState(), ...v1 });
   const { selectedId, canvas, ...rest } = v1;
   const items = rest.items.map((item) => ({ ...item, ...offsetItem(item, -w / 2, -h / 2) }));
   return { ...rest, items, selectedIds: selectedId ? [selectedId] : [] };
@@ -256,7 +257,7 @@ export function setPhotoZoom(id, zoom) {
 }
 
 export function fillCard(id) {
-  updateItem(id, { ...coverFrame(getItem(id).assetId, bleedRect(state.orientation)), rotation: undefined });
+  updateItem(id, { ...coverFrame(getItem(id).assetId, bleedRect(state)), rotation: undefined });
 }
 
 /** Returns false if the item is gone, e.g. it was removed while a photo was loading. */
@@ -276,8 +277,8 @@ export function placeAsset(assetId, side, at) {
   const placeholder = !at && itemsOnSide(side).find(isPlaceholder);
   if (placeholder) return void setPhoto(placeholder.id, assetId);
   at ??= { x: 0, y: 0 };
-  if (!itemsOnSide(side).length) return void addItem({ assetId, side, ...coverFrame(assetId, bleedRect(state.orientation)) });
-  const { w, h } = trimRect(state.orientation);
+  if (!itemsOnSide(side).length) return void addItem({ assetId, side, ...coverFrame(assetId, bleedRect(state)) });
+  const { w, h } = trimRect(state);
   const rect = containRect(asset, { x: at.x - w / 4, y: at.y - h / 4, w: w / 2, h: h / 2 });
   addItem({ assetId, side, frame: rect, image: { ...rect } });
 }
@@ -302,13 +303,13 @@ function fitTextToSlot(text, slot) {
 }
 
 export function addText(side) {
-  const { w } = trimRect(state.orientation);
+  const { w } = trimRect(state);
   return addItem(fitTextToSlot(newText(side), { x: -w * 0.4, y: 0, w: w * 0.8, h: 0 }));
 }
 
 /** `type` is 'circle', 'line', or one of the quadrilaterals in SHAPES. */
 export function addShape(side, type) {
-  const { w, h } = trimRect(state.orientation);
+  const { w, h } = trimRect(state);
   const size = Math.min(w, h) * 0.4;
   const frame = { x: -size / 2, y: -size / 2, w: size, h: size };
   const paint = { side, stroked: false, strokeWidth: ptToPx(2), color: '#1d1d1f', opacity: 1 };
@@ -358,8 +359,4 @@ export function restack(ids, dir) {
       [s.items[a], s.items[b]] = [s.items[b], s.items[a]];
     }
   });
-}
-
-export function setOrientation(orientation) {
-  update((s) => (s.orientation = orientation));
 }

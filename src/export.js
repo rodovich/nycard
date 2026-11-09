@@ -34,7 +34,7 @@ async function drawPhoto(ctx, item) {
 }
 
 async function renderSide(design, side) {
-  const { w, h } = canvasSize(design.orientation);
+  const { w, h } = canvasSize(design);
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;

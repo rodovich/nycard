@@ -188,9 +188,9 @@ const LANDSCAPE = [
 
 export const LAYOUTS = { portrait: PORTRAIT, landscape: LANDSCAPE };
 
-export function layoutSlots({ images, texts }, orientation) {
-  const t = trimRect(orientation);
-  const b = bleedRect(orientation);
+export function layoutSlots({ images, texts }, design) {
+  const t = trimRect(design);
+  const b = bleedRect(design);
   const EDGE = 0.001;
   const toCard = ([x, y, w, h]) => {
     const left = x <= EDGE ? b.x : t.x + x * t.w;
